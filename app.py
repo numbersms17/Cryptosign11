@@ -183,7 +183,7 @@ def make_tradingview_chart(df):
         },
         "series": [candlestick, volume],
         "markers": markers + current_markers
-    }
+    }]
 
     renderLightweightCharts(chart_config, key="btc_bombcode_tradingview")
 
