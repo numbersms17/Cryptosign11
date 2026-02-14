@@ -84,7 +84,7 @@ def make_tradingview_chart(df):
 
     # Prepare data format for Lightweight Charts
     chart_data = df.reset_index().copy()
-    chart_data['time'] = chart_data['timestamp'].dt.strftime('%Y-%m-%d %H:%M')
+    chart_data['time'] = chart_data['timestamp'].dt.strftime('%Y-%m-%d %H:%M')  # string time
     chart_data = chart_data[['time', 'open', 'high', 'low', 'close', 'volume']]
     chart_data = chart_data.rename(columns={'volume': 'value'})
 
@@ -117,9 +117,14 @@ def make_tradingview_chart(df):
     markers = []
     now = datetime.now(timezone.utc)
     recent_start = now - timedelta(hours=24)
-    recent_df = chart_data[pd.to_datetime(chart_data['time']) >= recent_start]
+    recent_start_naive = recent_start.replace(tzinfo=None)  # make naive to match pd.to_datetime output
+
+    # Convert time strings back to datetime (naive) for filtering
+    chart_data['time_dt'] = pd.to_datetime(chart_data['time'])
+    recent_df = chart_data[chart_data['time_dt'] >= recent_start_naive]
 
     for _, row in recent_df.iterrows():
+        # Parse time string to datetime (naive)
         ts_dt = pd.to_datetime(row['time'])
         h_info = get_signal_info(ts_dt.to_pydatetime())
 
