@@ -28,8 +28,8 @@ def get_pd(ts):
     pm = reduce(py + base.month)
     return reduce(pm + base.day)
 
-def get_ph(h, pd):
-    ph = pd + HOUR_VALUES[h]
+def get_ph(h, pd_val):
+    ph = pd_val + HOUR_VALUES[h]
     return ph if ph in {11,22} else reduce(ph)
 
 def fmt(h): return f"{h%12 or 12}{'am' if h<12 else 'pm'}"
@@ -39,27 +39,26 @@ def classify(day_bc, full_bc):
         return "High" if day_bc in {3,7,5,9} else "Low"
     return "High" if full_bc in {3,7,5,9} else "Low" if full_bc in {6,8} else "None"
 
-# ── yfinance only (reliable) ───────────────────────────────────────
+# ── yfinance fetch ─────────────────────────────────────────────────
 symbol = 'BTC-USD'
 
-# Cache data fetch with TTL ~60s
-@st.cache_data(ttl=60, show_spinner="Fetching fresh BTC data...")
+@st.cache_data(ttl=60, show_spinner="Updating BTC chart...")
 def get_btc_data():
     try:
-        print("Fetching BTC data from yfinance...")
+        st.write("Fetching fresh BTC 1m data...")  # visible feedback
         df = yf.download('BTC-USD', period='2d', interval='1m', progress=False)
         if df.empty:
-            print("yfinance empty")
+            print("yfinance returned empty")
             return pd.DataFrame()
         df = df[['Open','High','Low','Close','Volume']].rename(columns=str.lower)
         df.index.name = 'timestamp'
-        print(f"yfinance got {len(df)} rows")
-        return df.tail(400)
+        print(f"yfinance success: {len(df)} rows")
+        return df.tail(600)  # more rows for safety
     except Exception as e:
-        print(f"Fetch fail: {str(e)[:150]}")
+        print(f"Fetch error: {str(e)}")
         return pd.DataFrame()
 
-# ── Signal & Chart functions (unchanged, but now use now=UTC) ──────
+# ── Signal ─────────────────────────────────────────────────────────
 def get_signal_info(now):
     pd_val = get_pd(now)
     ph = get_ph(now.hour, pd_val)
@@ -75,34 +74,69 @@ def get_signal_info(now):
         signal = f"**SHORT** at {fmt(now.hour)} ({ht})"
     return {'cls':cls, 'ph':ph, 'ht':ht, 'dt':dt, 'signal':signal}
 
-def make_chart(df, info):
+# ── Chart ──────────────────────────────────────────────────────────
+def make_chart(df):
+    if df.empty:
+        return go.Figure()  # empty fig
+
     fig = go.Figure()
     fig.add_trace(go.Candlestick(
-        x=df.index, open=df.open, high=df.high, low=df.low, close=df.close,
-        name=symbol, increasing_line_color='lime', decreasing_line_color='red'
+        x=df.index,
+        open=df['open'],
+        high=df['high'],
+        low=df['low'],
+        close=df['close'],
+        name=symbol,
+        increasing_line_color='lime',
+        decreasing_line_color='red'
     ))
 
-    now_naive = datetime.now(timezone.utc)
-    today_start = now_naive.replace(hour=0, minute=0, second=0, microsecond=0)
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_start = pd.to_datetime(today_start)
 
     today_df = df[df.index >= today_start]
 
     for ts in today_df.index:
         h_info = get_signal_info(ts.to_pydatetime())
-        if h_info['ht']:
+        if h_info['ht']:  # string check – safe
             fig.add_vline(x=ts, line_dash="dot", line_color="orange", opacity=0.5)
-            fig.add_annotation(x=ts, y=df.loc[ts,'high']*1.003, text=h_info['ht'],
-                               showarrow=True, arrowhead=1, ax=20, ay=-30, font_color="orange")
+            fig.add_annotation(
+                x=ts,
+                y=float(df.loc[ts, 'high']) * 1.003,  # explicit float
+                text=h_info['ht'],
+                showarrow=True,
+                arrowhead=1,
+                ax=20,
+                ay=-30,
+                font_color="orange"
+            )
         if h_info['dt']:
             fig.add_vline(x=ts, line_dash="dot", line_color="cyan", opacity=0.5)
-            fig.add_annotation(x=ts, y=df.loc[ts,'low']*0.997, text=h_info['dt'],
-                               showarrow=True, arrowhead=1, ax=-20, ay=30, font_color="cyan")
+            fig.add_annotation(
+                x=ts,
+                y=float(df.loc[ts, 'low']) * 0.997,
+                text=h_info['dt'],
+                showarrow=True,
+                arrowhead=1,
+                ax=-20,
+                ay=30,
+                font_color="cyan"
+            )
 
-    if info['signal']:
+    # Current signal (only on latest bar)
+    info = get_signal_info(now)
+    if info['signal'] and not df.empty:  # safe checks
+        last_ts = df.index[-1]
+        last_close = float(df['close'].iloc[-1])
         fig.add_annotation(
-            x=df.index[-1], y=df.close.iloc[-1], text=info['signal'],
-            showarrow=True, arrowhead=2, ax=50, ay=-80,
+            x=last_ts,
+            y=last_close,
+            text=info['signal'],
+            showarrow=True,
+            arrowhead=2,
+            ax=50,
+            ay=-80,
             font=dict(size=16, color="yellow" if "BUY" in info['signal'] else "magenta"),
             bgcolor="rgba(0,0,0,0.7)"
         )
@@ -115,25 +149,25 @@ def make_chart(df, info):
     )
     return fig
 
-# ── Main UI ─────────────────────────────────────────────────────────
+# ── UI ─────────────────────────────────────────────────────────────
 st.title("BTC Bombcode Live Monitor")
 
-data = get_btc_data()  # auto-refreshes every ~60s thanks to ttl
+data = get_btc_data()
 
 if not data.empty:
-    now = datetime.now(timezone.utc)
-    info = get_signal_info(now)
-    fig = make_chart(data, info)
+    fig = make_chart(data)
     st.plotly_chart(fig, use_container_width=True)
 
-    txt = f"**Day**: {info['cls']}   |   **PH**: {info['ph']}"
+    now = datetime.now(timezone.utc)
+    info = get_signal_info(now)
+    txt = f"**Day classification**: {info['cls']}   |   **PH**: {info['ph']}"
     if info['signal']:
         txt += f"   →   {info['signal']}"
     st.markdown(txt)
 
-    st.caption(f"Updated: {now.strftime('%H:%M:%S UTC')} | yfinance • Data auto-refreshes ~every 60s")
+    st.caption(f"Last update: {now.strftime('%H:%M:%S UTC')} | Source: yfinance • Auto-refreshes ~every 60s")
 else:
-    st.info("Loading BTC data... (first load may take 30–90s)")
-    st.caption("If stuck >2 min: Check logs for 'Fetch fail' messages. Reboot app if needed.")
+    st.info("Still loading or no data from yfinance yet... Try refreshing in 1 min.")
+    st.caption("Logs show fetch worked – if no chart, reboot app or check for annotation errors.")
 
-st.caption("No threads = no drama • Refresh page manually if signals feel stale")
+st.caption("Fixed ambiguous Series error – should render now!")
