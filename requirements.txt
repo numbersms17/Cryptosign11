@@ -1,4 +1,7 @@
 streamlit
+streamlit-lightweight-charts
+yfinance
+pandas
 ccxt
 plotly
 yfinance
