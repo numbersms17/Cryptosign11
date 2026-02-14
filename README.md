@@ -1,6 +1,6 @@
 # BTC Bombcode Live Monitor
 
-Live BTC/USDT chart with numerology-based "bombcode" signals (High/Low PH, buy/short hints).
+Live BTC/USDT chart with numerology-based "bombcode" signals (High/Low, buy/short hints).
 
 Powered by Streamlit + CCXT/yfinance.
 
