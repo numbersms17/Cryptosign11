@@ -170,4 +170,42 @@ def make_tradingview_chart(df):
         "chart": {
             "layout": {
                 "background": {"type": "solid", "color": "#0e1117"},
-                "textColor
+                "textColor": "#d1d4dc"
+            },
+            "grid": {
+                "vertLines": {"color": "#2a2e39"},
+                "horzLines": {"color": "#2a2e39"}
+            },
+            "rightPriceScale": {"borderColor": "#2a2e39"},
+            "timeScale": {"borderColor": "#2a2e39", "timeVisible": True, "secondsVisible": False},
+            "width": 1000,
+            "height": 700
+        },
+        "series": [candlestick, volume],
+        "markers": markers + current_markers
+    }
+
+    renderLightweightCharts(chart_config, key="btc_bombcode_tradingview")
+
+# ── Main App ───────────────────────────────────────────────────────
+st.title("BTC Bombcode Live Monitor – TradingView Style")
+
+data = get_btc_data()
+
+if not data.empty:
+    make_tradingview_chart(data)
+
+    now = datetime.now(timezone.utc)
+    info = get_signal_info(now)
+    txt = f"**Day classification**: {info['cls']}   |   **PH**: {info['ph']}"
+    if info['signal']:
+        txt += f"   →   {info['signal']}"
+    st.markdown(txt)
+
+    st.caption(
+        f"Updated: {now.strftime('%H:%M:%S UTC')} | "
+        "Source: yfinance • Data refreshes ~every 60s • "
+        "Zoom, pan & hover like real TradingView"
+    )
+else:
+    st.info("Waiting for data... First load can take 30–90 seconds.")
