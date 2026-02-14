@@ -27,9 +27,9 @@ def get_current_info(now):
     if bc_d in {3, 5, 6, 7, 8, 9}:
         cls = "High" if bc_d in {3, 7, 5, 9} else "Low"
     else:
-        if bc_f in {3, 7, 5, 9}:
+        if bc_f in {1,3, 7, 5, 9}:
             cls = "High"
-        elif bc_f in {6, 8}:
+        elif bc_f in {2,4,6, 8}:
             cls = "Low"
         else:
             cls = "None"
