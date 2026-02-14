@@ -1,13 +1,11 @@
 import streamlit as st
 import pandas as pd
-import ccxt
 import plotly.graph_objects as go
 import yfinance as yf
 import time
-import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-# ── BOMB CODE LOGIC ────────────────────────────────────────────────
+# ── BOMB CODE LOGIC (unchanged) ────────────────────────────────────
 HOUR_VALUES = {0:12,1:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,10:10,11:11,
                12:12,13:1,14:2,15:3,16:4,17:5,18:6,19:7,20:8,21:9,22:10,23:11}
 
@@ -41,49 +39,27 @@ def classify(day_bc, full_bc):
         return "High" if day_bc in {3,7,5,9} else "Low"
     return "High" if full_bc in {3,7,5,9} else "Low" if full_bc in {6,8} else "None"
 
-# ── Exchange fallback ───────────────────────────────────────────────
-@st.cache_resource
-def get_exchange():
-    for name, factory in [
-        ("bybit",     ccxt.bybit),
-        ("gateio",    ccxt.gateio),
-        ("binanceus", ccxt.binanceus),
-        ("okx",       ccxt.okx),
-    ]:
-        try:
-            ex = factory({'enableRateLimit': True})
-            ex.fetch_ohlcv('BTC/USDT', '1m', limit=1)
-            st.write(f"Connected to **{name}**")
-            return ex, 'BTC/USDT'
-        except:
-            pass
-    st.warning("All CCXT failed → using yfinance BTC-USD")
-    return None, 'BTC-USD'
+# ── yfinance only (reliable) ───────────────────────────────────────
+symbol = 'BTC-USD'
 
-exchange, symbol = get_exchange()
-
-# Data
-if 'df' not in st.session_state:
-    st.session_state.df = pd.DataFrame(
-        columns=['timestamp','open','high','low','close','volume']
-    ).set_index('timestamp')
-
-# ── Fetch data ──────────────────────────────────────────────────────
-def fetch_data():
-    if exchange is None:
-        df = yf.download('BTC-USD', period='2d', interval='1m')
+# Cache data fetch with TTL ~60s
+@st.cache_data(ttl=60, show_spinner="Fetching fresh BTC data...")
+def get_btc_data():
+    try:
+        print("Fetching BTC data from yfinance...")
+        df = yf.download('BTC-USD', period='2d', interval='1m', progress=False)
+        if df.empty:
+            print("yfinance empty")
+            return pd.DataFrame()
         df = df[['Open','High','Low','Close','Volume']].rename(columns=str.lower)
         df.index.name = 'timestamp'
+        print(f"yfinance got {len(df)} rows")
         return df.tail(400)
-    else:
-        since = int((datetime.utcnow() - timedelta(hours=8)).timestamp() * 1000)
-        ohlcv = exchange.fetch_ohlcv(symbol, '1m', since=since, limit=400)
-        df = pd.DataFrame(ohlcv, columns=['timestamp','open','high','low','close','volume'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        df.set_index('timestamp', inplace=True)
-        return df
+    except Exception as e:
+        print(f"Fetch fail: {str(e)[:150]}")
+        return pd.DataFrame()
 
-# ── Signal ──────────────────────────────────────────────────────────
+# ── Signal & Chart functions (unchanged, but now use now=UTC) ──────
 def get_signal_info(now):
     pd_val = get_pd(now)
     ph = get_ph(now.hour, pd_val)
@@ -99,7 +75,6 @@ def get_signal_info(now):
         signal = f"**SHORT** at {fmt(now.hour)} ({ht})"
     return {'cls':cls, 'ph':ph, 'ht':ht, 'dt':dt, 'signal':signal}
 
-# ── Plot ────────────────────────────────────────────────────────────
 def make_chart(df, info):
     fig = go.Figure()
     fig.add_trace(go.Candlestick(
@@ -107,7 +82,7 @@ def make_chart(df, info):
         name=symbol, increasing_line_color='lime', decreasing_line_color='red'
     ))
 
-    now_naive = datetime.utcnow()
+    now_naive = datetime.now(timezone.utc)
     today_start = now_naive.replace(hour=0, minute=0, second=0, microsecond=0)
     today_start = pd.to_datetime(today_start)
 
@@ -140,50 +115,25 @@ def make_chart(df, info):
     )
     return fig
 
-# ── UI ──────────────────────────────────────────────────────────────
+# ── Main UI ─────────────────────────────────────────────────────────
 st.title("BTC Bombcode Live Monitor")
 
-chart_placeholder = st.empty()
-status_placeholder = st.empty()
-update_placeholder = st.empty()
+data = get_btc_data()  # auto-refreshes every ~60s thanks to ttl
 
-# Background updater
-def updater():
-    while True:
-        try:
-            new_df = fetch_data()
-            if not st.session_state.df.empty:
-                last_ts = st.session_state.df.index.max()
-                st.session_state.df = pd.concat([
-                    st.session_state.df,
-                    new_df[new_df.index > last_ts]
-                ])
-            else:
-                st.session_state.df = new_df
-            time.sleep(60)  # ↑ increased to 60s to avoid rate limits on free deploy
-        except Exception as e:
-            st.error(f"Fetch error: {str(e)[:100]}…")
-            time.sleep(300)
-
-if 'updater_running' not in st.session_state:
-    st.session_state.updater_running = True
-    threading.Thread(target=updater, daemon=True).start()
-
-# Main loop (Streamlit reruns on interaction, but thread keeps data fresh)
-if not st.session_state.df.empty:
-    now = datetime.utcnow()
+if not data.empty:
+    now = datetime.now(timezone.utc)
     info = get_signal_info(now)
-    fig = make_chart(st.session_state.df.tail(300), info)
-    chart_placeholder.plotly_chart(fig, use_container_width=True)
+    fig = make_chart(data, info)
+    st.plotly_chart(fig, use_container_width=True)
 
     txt = f"**Day**: {info['cls']}   |   **PH**: {info['ph']}"
     if info['signal']:
         txt += f"   →   {info['signal']}"
-    status_placeholder.markdown(txt)
+    st.markdown(txt)
 
-    source = 'yfinance' if exchange is None else exchange.id
-    update_placeholder.caption(f"Updated: {now.strftime('%H:%M:%S UTC')} | {source}")
+    st.caption(f"Updated: {now.strftime('%H:%M:%S UTC')} | yfinance • Data auto-refreshes ~every 60s")
 else:
-    st.info("Loading BTC data... (may take a minute)")
+    st.info("Loading BTC data... (first load may take 30–90s)")
+    st.caption("If stuck >2 min: Check logs for 'Fetch fail' messages. Reboot app if needed.")
 
-st.caption("Refresh page to update signals • Data refreshes every ~60s in background")
+st.caption("No threads = no drama • Refresh page manually if signals feel stale")
