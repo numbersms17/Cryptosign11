@@ -33,7 +33,7 @@ def get_current_info(now):
         'signal': f"**{cls.upper()} day** (day_bc={bc_d} | full_bc={bc_f})"
     }
 
-# ── Historical data load ───────────────────────────────────────────
+# ── Load historical data ───────────────────────────────────────────
 @st.cache_data(ttl=3600 * 6)
 def load_historical_data():
     try:
@@ -57,32 +57,43 @@ def load_historical_data():
         st.error(f"Data load error: {str(e)}")
         return None
 
-# ── Single-day stats (original backtest) ───────────────────────────
+# ── Single-day stats ───────────────────────────────────────────────
 def compute_single_stats(df):
     if df is None:
         return None, None, None, None
-    by_cls = df.groupby('cls')['Return'].agg(['count', 'mean', 'median', lambda x: (x > 0).mean() * 100, 'std']).round(2)
-    by_cls.columns = ['Days', 'Avg_Return', 'Median', 'Win_Rate', 'Volatility']
-    combos = df.groupby(['cls', 'day_bc', 'full_bc'])['Return'].agg(['count', 'mean', 'median', lambda x: (x > 0).mean() * 100, 'std']).round(2)
-    combos.columns = ['Days', 'Avg_Return', 'Median', 'Win_Rate', 'Volatility']
+    by_cls = df.groupby('cls')['Return'].agg(
+        Days='count',
+        Avg_Return='mean',
+        Median='median',
+        Win_Rate=lambda x: (x > 0).mean() * 100,
+        Volatility='std'
+    ).round(2)
+    combos = df.groupby(['cls', 'day_bc', 'full_bc'])['Return'].agg(
+        Days='count',
+        Avg_Return='mean',
+        Median='median',
+        Win_Rate=lambda x: (x > 0).mean() * 100,
+        Volatility='std'
+    ).round(2)
     top_combos = combos[combos['Days'] >= 30].sort_values('Avg_Return', ascending=False).head(20)
     day_bc_only = df.groupby('day_bc')['Return'].mean().sort_values(ascending=False).round(2)
     full_bc_only = df.groupby('full_bc')['Return'].mean().sort_values(ascending=False).round(2)
     return by_cls, top_combos, day_bc_only, full_bc_only
 
-# ── Genius Mode: Full_BC Sequence Scanner ──────────────────────────
+# ── Full_BC Sequence Scanner ───────────────────────────────────────
 def scan_full_bc_sequences(df, min_length=4):
     chains = []
     current_chain = []
+    start_idx = None
     for i in range(len(df)):
+        curr = df.iloc[i]['full_bc']
         if not current_chain:
-            current_chain = [df.iloc[i]['full_bc']]
+            current_chain = [curr]
             start_idx = i
             continue
         prev = current_chain[-1]
-        curr = df.iloc[i]['full_bc']
-        # Consecutive check: +1 or wrap (9→1) or master jump (1→11, 10→11, 21→22 if fits)
-        if curr == prev + 1 or (prev == 9 and curr == 1) or (prev in {1,10,21} and curr in {11,22}):
+        # Ascending consecutive, wrap 9→1, or master-like jumps (1→11, 10→11, etc.)
+        if curr == prev + 1 or (prev == 9 and curr == 1) or (prev in {1, 10, 21} and curr in {11, 22}):
             current_chain.append(curr)
         else:
             if len(current_chain) >= min_length:
@@ -90,7 +101,6 @@ def scan_full_bc_sequences(df, min_length=4):
                 start_date = df.index[start_idx].date()
                 end_date = df.index[i-1].date()
                 seq_str = '→'.join(map(str, current_chain))
-                avg_full_bc = np.mean(current_chain)
                 bias = 'LONG' if chain_return > 0 else 'SHORT'
                 chains.append({
                     'Sequence': seq_str,
@@ -98,12 +108,11 @@ def scan_full_bc_sequences(df, min_length=4):
                     'Start_Date': start_date,
                     'End_Date': end_date,
                     'Return': round(chain_return, 2),
-                    'Bias': bias,
-                    'Avg_Full_BC': round(avg_full_bc, 2)
+                    'Bias': bias
                 })
             current_chain = [curr]
             start_idx = i
-    # Last chain if qualifying
+    # Last chain
     if len(current_chain) >= min_length:
         chain_return = (df.iloc[-1]['Close'] / df.iloc[start_idx]['Open'] - 1) * 100
         start_date = df.index[start_idx].date()
@@ -116,13 +125,11 @@ def scan_full_bc_sequences(df, min_length=4):
             'Start_Date': start_date,
             'End_Date': end_date,
             'Return': round(chain_return, 2),
-            'Bias': bias,
-            'Avg_Full_BC': round(np.mean(current_chain), 2)
+            'Bias': bias
         })
     chain_df = pd.DataFrame(chains)
     if chain_df.empty:
-        return None
-    # Group by sequence pattern for stats
+        return None, None
     pattern_stats = chain_df.groupby('Sequence').agg({
         'Length': 'mean',
         'Return': ['count', 'mean', 'std', lambda x: (x > 0).mean() * 100],
@@ -133,7 +140,7 @@ def scan_full_bc_sequences(df, min_length=4):
     return chain_df, pattern_stats
 
 # ── Main App ───────────────────────────────────────────────────────
-st.title("BTC Bombcode Analyzer – Genius Sequence Edition")
+st.title("BTC Bombcode Analyzer – Sequence Scanner")
 
 now = datetime.now(timezone.utc)
 info = get_current_info(now)
@@ -145,12 +152,31 @@ st.markdown(f"""
 **full_bc**: {info['full_bc']}  
 {info['signal']}
 """)
-st.caption(f"UTC: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+st.caption(f"Updated: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
 st.divider()
 
 df = load_historical_data()
 
 if df is not None:
-    st.subheader("Single-Day Backtest (Original)")
-    by_cls, top_com
+    st.subheader("Single-Day Backtest")
+    by_cls, top_combos, day_bc_only, full_bc_only = compute_single_stats(df)
+    st.text("By Classification:\n" + by_cls.to_string())
+    st.text("Top Combos (min 30 days):\n" + top_combos.to_string())
+    st.text("By day_bc:\n" + day_bc_only.to_string())
+    st.text("By full_bc:\n" + full_bc_only.to_string())
+
+    st.divider()
+
+    st.subheader("Full_BC Sequence Scanner (Consecutive Chains)")
+    st.info("Detects ascending full_bc chains (min 4 days). Shows patterns, returns, winrate. Sorted high winrate first.")
+    chain_df, pattern_stats = scan_full_bc_sequences(df, min_length=4)
+    if pattern_stats is not None:
+        st.text("Pattern Stats (High Winrate First):\n" + pattern_stats.to_string())
+        st.text("Detected Chains Sample (first 20):\n" + chain_df.head(20).to_string(index=False))
+    else:
+        st.warning("No consecutive full_bc chains ≥4 days found.")
+else:
+    st.error("Failed to load BTC data. Check yfinance.")
+
+st.caption("yfinance daily • Sequence scanner for patterns like 8→9→1→11→3...")
