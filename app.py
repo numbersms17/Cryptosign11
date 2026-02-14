@@ -1,12 +1,14 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
 import yfinance as yf
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
+from streamlit_lightweight_charts import renderLightweightCharts
 
 # ── BOMB CODE LOGIC ────────────────────────────────────────────────
-HOUR_VALUES = {0:12,1:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,10:10,11:11,
-               12:12,13:1,14:2,15:3,16:4,17:5,18:6,19:7,20:8,21:9,22:10,23:11}
+HOUR_VALUES = {
+    0:12,1:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,10:10,11:11,
+    12:12,13:1,14:2,15:3,16:4,17:5,18:6,19:7,20:8,21:9,22:10,23:11
+}
 
 HIGH_PH = {3,6,9}
 DIP_PH  = {7,11}
@@ -38,27 +40,27 @@ def classify(day_bc, full_bc):
         return "High" if day_bc in {3,7,5,9} else "Low"
     return "High" if full_bc in {3,7,5,9} else "Low" if full_bc in {6,8} else "None"
 
-# ── Data fetch (no spinner to avoid stuck feeling) ─────────────────
+# ── Data fetch ─────────────────────────────────────────────────────
 symbol = 'BTC-USD'
 
-@st.cache_data(ttl=60, show_spinner=False)  # No auto-spinner → we control UI
+@st.cache_data(ttl=60, show_spinner=False)
 def get_btc_data():
-    with st.status("Fetching BTC 1m data from yfinance...", expanded=True) as status:
+    with st.status("Fetching BTC 1-minute data from yfinance...", expanded=True) as status:
         try:
             status.update(label="Downloading...", state="running")
             df = yf.download(symbol, period='2d', interval='1m', progress=False)
             if df.empty:
-                status.update(label="No data returned", state="error")
+                status.update(label="No data returned from yfinance", state="error")
                 return pd.DataFrame()
             df = df[['Open','High','Low','Close','Volume']].rename(columns=str.lower)
             df.index.name = 'timestamp'
-            status.update(label=f"Success! Got {len(df)} rows", state="complete")
+            status.update(label=f"Success — {len(df)} candles loaded", state="complete", expanded=False)
             return df.tail(600)
         except Exception as e:
-            status.update(label=f"Fetch failed: {str(e)[:100]}", state="error")
+            status.update(label=f"Fetch error: {str(e)[:120]}", state="error")
             return pd.DataFrame()
 
-# ── Signal & Chart (fixed float deprecation) ───────────────────────
+# ── Signal logic ───────────────────────────────────────────────────
 def get_signal_info(now):
     pd_val = get_pd(now)
     ph = get_ph(now.hour, pd_val)
@@ -74,88 +76,127 @@ def get_signal_info(now):
         signal = f"**SHORT** at {fmt(now.hour)} ({ht})"
     return {'cls':cls, 'ph':ph, 'ht':ht, 'dt':dt, 'signal':signal}
 
-def make_chart(df):
+# ── TradingView Lightweight Chart ──────────────────────────────────
+def make_tradingview_chart(df):
     if df.empty:
-        fig = go.Figure()
-        fig.update_layout(title="No data available")
-        return fig
+        st.error("No data available for chart")
+        return
 
-    fig = go.Figure()
-    fig.add_trace(go.Candlestick(
-        x=df.index,
-        open=df['open'],
-        high=df['high'],
-        low=df['low'],
-        close=df['close'],
-        name=symbol,
-        increasing_line_color='lime',
-        decreasing_line_color='red'
-    ))
+    # Prepare data format for Lightweight Charts
+    chart_data = df.reset_index().copy()
+    chart_data['time'] = chart_data['timestamp'].dt.strftime('%Y-%m-%d %H:%M')
+    chart_data = chart_data[['time', 'open', 'high', 'low', 'close', 'volume']]
+    chart_data = chart_data.rename(columns={'volume': 'value'})
 
+    # Candlestick series
+    candlestick = {
+        "type": "Candlestick",
+        "data": chart_data[['time', 'open', 'high', 'low', 'close']].to_dict(orient='records'),
+        "options": {
+            "upColor": "#00ff9d",
+            "downColor": "#ff3366",
+            "borderVisible": False,
+            "wickUpColor": "#00ff9d",
+            "wickDownColor": "#ff3366"
+        }
+    }
+
+    # Volume bars (optional - comment out if unwanted)
+    volume = {
+        "type": "Histogram",
+        "data": chart_data[['time', 'value']].to_dict(orient='records'),
+        "options": {
+            "color": "#26a69a",
+            "priceFormat": {"type": "volume"},
+            "priceScaleId": "",
+            "scaleMargins": {"top": 0.82, "bottom": 0}
+        }
+    }
+
+    # Markers for PH signals (only recent ones to avoid clutter)
+    markers = []
     now = datetime.now(timezone.utc)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    today_start = pd.to_datetime(today_start)
+    recent_start = now - timedelta(hours=24)
+    recent_df = chart_data[pd.to_datetime(chart_data['time']) >= recent_start]
 
-    today_df = df[df.index >= today_start]
+    for _, row in recent_df.iterrows():
+        ts_dt = pd.to_datetime(row['time'])
+        h_info = get_signal_info(ts_dt.to_pydatetime())
 
-    for ts in today_df.index:
-        h_info = get_signal_info(ts.to_pydatetime())
         if h_info['ht']:
-            fig.add_vline(x=ts, line_dash="dot", line_color="orange", opacity=0.5)
-            fig.add_annotation(
-                x=ts,
-                y=df.loc[ts, 'high'].item() * 1.003,  # .item() fixes deprecation
-                text=h_info['ht'],
-                showarrow=True, arrowhead=1, ax=20, ay=-30, font_color="orange"
-            )
+            markers.append({
+                "time": row['time'],
+                "position": "aboveBar",
+                "color": "#ffaa00",
+                "shape": "arrowDown",
+                "text": h_info['ht']
+            })
+
         if h_info['dt']:
-            fig.add_vline(x=ts, line_dash="dot", line_color="cyan", opacity=0.5)
-            fig.add_annotation(
-                x=ts,
-                y=df.loc[ts, 'low'].item() * 0.997,
-                text=h_info['dt'],
-                showarrow=True, arrowhead=1, ax=-20, ay=30, font_color="cyan"
-            )
+            markers.append({
+                "time": row['time'],
+                "position": "belowBar",
+                "color": "#00ccff",
+                "shape": "arrowUp",
+                "text": h_info['dt']
+            })
 
+    # Current signal as prominent marker
     info = get_signal_info(now)
+    current_markers = []
     if info['signal']:
-        last_ts = df.index[-1]
-        last_close = df['close'].iloc[-1].item()  # .item() here too
-        fig.add_annotation(
-            x=last_ts,
-            y=last_close,
-            text=info['signal'],
-            showarrow=True, arrowhead=2, ax=50, ay=-80,
-            font=dict(size=16, color="yellow" if "BUY" in info['signal'] else "magenta"),
-            bgcolor="rgba(0,0,0,0.7)"
-        )
+        last_time = chart_data['time'].iloc[-1]
+        color = "#00ff00" if "BUY" in info['signal'] else "#ff00ff"
+        current_markers = [{
+            "time": last_time,
+            "position": "inBar",
+            "color": color,
+            "shape": "circle",
+            "text": info['signal'],
+            "size": 2
+        }]
 
-    fig.update_layout(
-        title=f"{symbol} Live – {info['cls']} day | PH = {info['ph']}",
-        xaxis_rangeslider_visible=False,
-        height=650,
-        template="plotly_dark"
-    )
-    return fig
+    # Full chart configuration
+    chart_config = [{
+        "chart": {
+            "layout": {
+                "background": {"type": "solid", "color": "#0e1117"},
+                "textColor": "#d1d4dc"
+            },
+            "grid": {
+                "vertLines": {"color": "#2a2e39"},
+                "horzLines": {"color": "#2a2e39"}
+            },
+            "rightPriceScale": {"borderColor": "#2a2e39"},
+            "timeScale": {"borderColor": "#2a2e39", "timeVisible": True, "secondsVisible": False},
+            "width": 1000,
+            "height": 700
+        },
+        "series": [candlestick, volume],
+        "markers": markers + current_markers
+    }]
 
-# ── Main UI ────────────────────────────────────────────────────────
-st.title("BTC Bombcode Live Monitor")
+    renderLightweightCharts(chart_config, key="btc_bombcode_tradingview")
+
+# ── Main App ───────────────────────────────────────────────────────
+st.title("BTC Bombcode Live Monitor – TradingView Style")
 
 data = get_btc_data()
 
 if not data.empty:
-    fig = make_chart(data)
-    st.plotly_chart(fig, use_container_width=True)
+    make_tradingview_chart(data)
 
     now = datetime.now(timezone.utc)
     info = get_signal_info(now)
-    txt = f"**Day**: {info['cls']}   |   **PH**: {info['ph']}"
+    txt = f"**Day classification**: {info['cls']}   |   **PH**: {info['ph']}"
     if info['signal']:
         txt += f"   →   {info['signal']}"
     st.markdown(txt)
 
-    st.caption(f"Updated: {now.strftime('%H:%M:%S UTC')} | yfinance • Auto-refreshes ~60s")
+    st.caption(
+        f"Updated: {now.strftime('%H:%M:%S UTC')} | "
+        "Source: yfinance • Data refreshes ~every 60s • "
+        "Zoom, pan & hover like real TradingView"
+    )
 else:
-    st.warning("No data loaded yet. Wait for fetch or refresh page.")
-
-st.caption("Warnings fixed • If spinner stuck before, it's gone now")
+    st.info("Waiting for data... First load can take 30–90 seconds.")
