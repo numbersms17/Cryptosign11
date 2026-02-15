@@ -59,15 +59,30 @@ if start_date >= end_date:
     st.stop()
 
 if st.button("Run Backtest", type="primary"):
-    with st.spinner("Downloading data and computing..."):
+    with st.spinner("Downloading data (chunked for Yahoo limits) & computing..."):
         try:
-            # ── Load & prepare data ────────────────────────────────────────
-            df = yf.download('BTC-USD', start=start_date, end=end_date + timedelta(days=1), interval='1h')
-            df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-            
-            # Force naive index (fixes tz issues)
-            df.index = pd.to_datetime(df.index).tz_localize(None)
+            # ── Chunked download to bypass 730-day limit for 1h ──────────────
+            data_frames = []
+            current_start = pd.to_datetime(start_date)
+            final_end = pd.to_datetime(end_date) + timedelta(days=1)
 
+            while current_start < final_end:
+                chunk_end = min(current_start + timedelta(days=729), final_end)
+                st.write(f"Fetching chunk: {current_start.date()} → {chunk_end.date()}")
+                chunk = yf.download('BTC-USD', start=current_start, end=chunk_end, interval='1h')
+                if not chunk.empty:
+                    data_frames.append(chunk)
+                current_start = chunk_end
+
+            if not data_frames:
+                st.error("No data could be downloaded. Try shorter range or check Yahoo availability.")
+                st.stop()
+
+            df = pd.concat(data_frames).sort_index()
+            df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+            df.index = pd.to_datetime(df.index).tz_localize(None)  # Ensure naive
+
+            # ── Compute daily classification ─────────────────────────────────
             df['date'] = df.index.date
             daily_cls = {}
             for d in pd.unique(df['date']):
@@ -77,20 +92,21 @@ if st.button("Run Backtest", type="primary"):
                 daily_cls[d] = classify(bc_d, bc_f)
 
             df['day_cls'] = df['date'].map(daily_cls)
+
             df['hour'] = df.index.hour
 
-            # Safer computation of 'pd' column
-            df['pd'] = [get_pd(ts.to_pydatetime()) for ts in df.index]
+            # Safe 'pd' computation
+            df['pd_val'] = [get_pd(ts.to_pydatetime()) for ts in df.index]
 
-            # Then ph
-            df['ph'] = df.apply(lambda row: get_ph(row['hour'], row['pd']), axis=1)
+            # Then 'ph'
+            df['ph'] = df.apply(lambda row: get_ph(row['hour'], row['pd_val']), axis=1)
 
             df['is_H'] = df['ph'].isin(HIGH_PH)
             df['is_D'] = df['ph'].isin(DIP_PH)
 
             # ── Trades ──────────────────────────────────────────────────────
             trades = []
-            FEE = 0.0008  # 0.08%
+            FEE = 0.0008
 
             for idx, row in df.iterrows():
                 ts = idx
@@ -121,7 +137,7 @@ if st.button("Run Backtest", type="primary"):
                         exit_price = exit_close
 
                     trades.append({'entry_time': ts, 'type': 'short', 'day_cls': cls,
-                                   'entry': entry, 'exit': exit_price, 'pnl': pnl})
+                                   'pnl': pnl})
 
                 elif cls == "Low" and row['is_D']:
                     entry = row['Low']
@@ -143,7 +159,7 @@ if st.button("Run Backtest", type="primary"):
                         exit_price = exit_close
 
                     trades.append({'entry_time': ts, 'type': 'long', 'day_cls': cls,
-                                   'entry': entry, 'exit': exit_price, 'pnl': pnl})
+                                   'pnl': pnl})
 
             if not trades:
                 st.warning("No trades triggered in this period.")
@@ -164,7 +180,7 @@ if st.button("Run Backtest", type="primary"):
             fig.add_trace(go.Scatter(x=drawdown.index, y=drawdown,
                                      name="Drawdown", line_color="red", fill='tozeroy',
                                      fillcolor='rgba(255,0,0,0.15)'))
-            fig.update_layout(title="Equity Curve & Drawdown",
+            fig.update_layout(title="Equity Curve & Drawdown Bands",
                               yaxis_title="Return / DD", template="plotly_dark",
                               height=500, hovermode="x unified")
             st.plotly_chart(fig, use_container_width=True)
@@ -194,4 +210,6 @@ if st.button("Run Backtest", type="primary"):
 
         except Exception as e:
             st.error(f"Error during backtest: {str(e)}")
-            st.info("Try shorter date range or check connection. Full traceback in Cloud logs.")
+            st.info("Yahoo limits 1h data to \~730 days — try a shorter range (e.g. 2024–2026). For full history, consider Binance API or CSV upload.")
+
+st.info("Deployed on Streamlit Cloud? Reboot app after code changes.")
