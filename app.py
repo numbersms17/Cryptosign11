@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ── BOMB CODE FUNCTIONS ────────────────────────────────────────────────────
 HOUR_VALUES = {0:12,1:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,10:10,11:11,
