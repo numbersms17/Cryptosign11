@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 # ── Bombcode functions ─────────────────────────────────────────────────────
 HOUR_VALUES = {0:12,1:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,10:10,11:11,
@@ -21,7 +21,6 @@ def bombcode_day(d): return reduce(d)
 def bombcode_full(m,d,y): return reduce(m + d + y)
 
 def get_pd(ts):
-    # ts should be naive
     base = ts.replace(hour=18, minute=15)
     if ts.hour < 18 or (ts.hour == 18 and ts.minute < 15):
         base -= timedelta(days=1)
@@ -66,8 +65,8 @@ if st.button("Run Backtest", type="primary"):
             df = yf.download('BTC-USD', start=start_date, end=end_date + timedelta(days=1), interval='1h')
             df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
             
-            # Make index naive (critical fix)
-            df.index = df.index.tz_localize(None)
+            # Force naive index (fixes tz issues)
+            df.index = pd.to_datetime(df.index).tz_localize(None)
 
             df['date'] = df.index.date
             daily_cls = {}
@@ -79,8 +78,12 @@ if st.button("Run Backtest", type="primary"):
 
             df['day_cls'] = df['date'].map(daily_cls)
             df['hour'] = df.index.hour
-            df['pd'] = df.apply(lambda r: get_pd(r.name), axis=1)
-            df['ph'] = df.apply(lambda r: get_ph(r['hour'], r['pd']), axis=1)
+
+            # Safer computation of 'pd' column
+            df['pd'] = [get_pd(ts.to_pydatetime()) for ts in df.index]
+
+            # Then ph
+            df['ph'] = df.apply(lambda row: get_ph(row['hour'], row['pd']), axis=1)
 
             df['is_H'] = df['ph'].isin(HIGH_PH)
             df['is_D'] = df['ph'].isin(DIP_PH)
@@ -159,8 +162,9 @@ if st.button("Run Backtest", type="primary"):
             fig.add_trace(go.Scatter(x=equity.index, y=equity,
                                      name="Equity Curve", line_color="lime"))
             fig.add_trace(go.Scatter(x=drawdown.index, y=drawdown,
-                                     name="Drawdown", line_color="red", fill='tozeroy', fillcolor='rgba(255,0,0,0.15)'))
-            fig.update_layout(title="Equity Curve & Drawdown Bands",
+                                     name="Drawdown", line_color="red", fill='tozeroy',
+                                     fillcolor='rgba(255,0,0,0.15)'))
+            fig.update_layout(title="Equity Curve & Drawdown",
                               yaxis_title="Return / DD", template="plotly_dark",
                               height=500, hovermode="x unified")
             st.plotly_chart(fig, use_container_width=True)
@@ -182,12 +186,12 @@ if st.button("Run Backtest", type="primary"):
                 })
             )
 
-            st.subheader("Recent 20 Trades")
+            st.subheader("Last 20 Trades")
             st.dataframe(
                 trades_df.tail(20)[['entry_time', 'type', 'day_cls', 'pnl']]
                 .style.format({'pnl': '{:.2%}'})
             )
 
         except Exception as e:
-            st.error(f"Backtest failed: {str(e)}")
-            st.info("Try a shorter date range or check your internet connection.")
+            st.error(f"Error during backtest: {str(e)}")
+            st.info("Try shorter date range or check connection. Full traceback in Cloud logs.")
