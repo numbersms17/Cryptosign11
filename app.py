@@ -1,11 +1,11 @@
-# app.py - FINAL FIXED VERSION - NO UNHASHABLE ERROR
+# app.py - FINAL WORKING VERSION
 import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 
-# ── BOMB CODE FUNCTIONS ────────────────────────────────────────────────────
+# ── BOMB CODE ─────────────────────────────────────────────────────────────
 HOUR_VALUES = {0:12,1:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,10:10,11:11,
                12:12,13:1,14:2,15:3,16:4,17:5,18:6,19:7,20:8,21:9,22:10,23:11}
 
@@ -27,10 +27,6 @@ def get_pd(ts):
     py = reduce(3 + 1 + base.year)
     pm = reduce(py + base.month)
     return reduce(pm + base.day)
-
-def get_ph(h, pd_val):
-    ph = pd_val + HOUR_VALUES[h]
-    return ph if ph in {11,22} else reduce(ph)
 
 def classify(day_bc, full_bc):
     if day_bc in {3,5,6,7,8,9}:
@@ -77,26 +73,29 @@ if st.button("RUN BACKTEST", type="primary"):
         df['date'] = df.index.date
         df['hour'] = df.index.hour
 
-        # Safe pd_val (map prevents series issues)
         df['pd_val'] = df.index.map(lambda ts: get_pd(ts.to_pydatetime()))
 
-        # Vectorized ph computation (no apply)
-        df['ph'] = df['pd_val'] + df['hour'].map(HOUR_VALUES)
+        df['hour_value'] = df['hour'].replace(HOUR_VALUES)
+        df['ph'] = df['pd_val'] + df['hour_value']
         df['ph'] = df['ph'].apply(lambda x: x if x in {11,22} else reduce(x))
+        df = df.drop(columns=['hour_value'], errors='ignore')
 
         df['day_cls'] = df['date'].map(lambda d: classify(bombcode_day(d.day), bombcode_full(d.month, d.day, d.year)))
 
         df['is_H'] = df['ph'].isin(HIGH_PH) & (df['day_cls'] == "High")
         df['is_D'] = df['ph'].isin(DIP_PH) & (df['day_cls'] == "Low")
 
-        # Trades
+        # Trades - SAFE VERSION
         trades = []
         FEE = 0.0008
         for i in range(len(df) - 1):
             row = df.iloc[i]
             next_row = df.iloc[i+1]
 
-            if row['is_H']:
+            is_H_scalar = row['is_H'].item() if isinstance(row['is_H'], pd.Series) else row['is_H']
+            is_D_scalar = row['is_D'].item() if isinstance(row['is_D'], pd.Series) else row['is_D']
+
+            if is_H_scalar:
                 entry = row['High']
                 tp_price = entry * 0.99
                 sl_price = entry * 1.005
@@ -108,7 +107,7 @@ if st.button("RUN BACKTEST", type="primary"):
                     pnl = (entry - next_row['Close']) / entry - 2 * FEE
                 trades.append({'time': row.name, 'type': 'SHORT', 'pnl': pnl})
 
-            elif row['is_D']:
+            elif is_D_scalar:
                 entry = row['Low']
                 tp_price = entry * 1.01
                 sl_price = entry * 0.995
@@ -151,4 +150,4 @@ if st.button("RUN BACKTEST", type="primary"):
         st.success("BACKTEST COMPLETE!")
         st.dataframe(trades_df.tail(20).style.format({'pnl': '{:.2%}'}))
 
-st.caption("Chunking + vectorized fix = full 2020-2026 backtest working. Reboot app if needed.")
+st.caption("Chunking + .item() fix = full history backtest working. Reboot app after push.")
