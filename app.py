@@ -86,24 +86,29 @@ def scan_price_swings(df, min_days=4, max_days=10, threshold_pct=10):
     for length in range(min_days, max_days + 1):
         for start in range(len(df) - length):
             slice_df = df.iloc[start:start+length]
-            total_return = (slice_df['Close'].iloc[-1] / slice_df['Open'].iloc[0] - 1) * 100
-            if abs(total_return) >= threshold_pct:
-                start_date = slice_df.index[0].date()
-                end_date = slice_df.index[-1].date()
-                start_full_bc = slice_df['full_bc'].iloc[0]
-                end_full_bc = slice_df['full_bc'].iloc[-1]
-                start_day_bc = slice_df['day_bc'].iloc[0]
-                direction = 'UP (Top/Short)' if total_return >= threshold_pct else 'DOWN (Bottom/Long)'
-                swings.append({
-                    'Start_Date': start_date,
-                    'End_Date': end_date,
-                    'Length': length,
-                    'Total_Return (%)': round(total_return, 2),
-                    'Direction': direction,
-                    'Start_full_bc': start_full_bc,
-                    'End_full_bc': end_full_bc,
-                    'Start_day_bc': start_day_bc
-                })
+            try:
+                open_price = slice_df['Open'].iloc[0].item()
+                close_price = slice_df['Close'].iloc[-1].item()
+                total_return = (close_price / open_price - 1) * 100
+                if abs(total_return) >= threshold_pct:
+                    start_date = slice_df.index[0].date()
+                    end_date = slice_df.index[-1].date()
+                    start_full_bc = slice_df['full_bc'].iloc[0]
+                    end_full_bc = slice_df['full_bc'].iloc[-1]
+                    start_day_bc = slice_df['day_bc'].iloc[0]
+                    direction = 'UP (Top/Short)' if total_return >= threshold_pct else 'DOWN (Bottom/Long)'
+                    swings.append({
+                        'Start_Date': start_date,
+                        'End_Date': end_date,
+                        'Length': length,
+                        'Total_Return (%)': round(total_return, 2),
+                        'Direction': direction,
+                        'Start_full_bc': start_full_bc,
+                        'End_full_bc': end_full_bc,
+                        'Start_day_bc': start_day_bc
+                    })
+            except:
+                continue  # skip invalid slice
     swing_df = pd.DataFrame(swings)
     if swing_df.empty:
         return None, None
@@ -159,13 +164,13 @@ if df is not None:
     st.divider()
 
     st.subheader("Price Swing Scanner – Big Moves (≥10% over 4–10 days)")
-    st.info("Detects historical swings with strong up/down moves. Look at Start_full_bc for entry bias (e.g. certain numbers start big drops → short).")
+    st.info("Detects historical periods with strong up/down moves. Look at Start_full_bc for entry bias (e.g. certain numbers start big drops → short).")
     swing_df, start_stats = scan_price_swings(df, min_days=4, max_days=10, threshold_pct=10)
     if start_stats is not None:
         st.text("Swing Stats by Start full_bc (Entry Bias):\n" + start_stats.to_string())
         st.text("Detected Swings Sample (first 20):\n" + swing_df.head(20).to_string(index=False))
     else:
-        st.warning("No swings ≥10% found (try lowering threshold_pct to 5 or 8).")
+        st.warning("No swings ≥10% found (try lowering threshold_pct to 5 or 8 in code).")
 
     st.divider()
 
@@ -177,4 +182,4 @@ if df is not None:
 else:
     st.error("Failed to load BTC data.")
 
-st.caption("yfinance daily • Price swing focus • Bottom/Top of month check")
+st.caption("yfinance daily • Price swing focus • Bottom/Top of month check • Scalar-safe")
