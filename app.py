@@ -1,4 +1,4 @@
-# app.py - SIMPLE DAILY HIGH/LOW BACKTEST - FIXED FLOAT IN SET ERROR
+# app.py - FIXED AMBIGUOUS TRUTH VALUE ERROR
 import streamlit as st
 import pandas as pd
 import yfinance as yf
@@ -21,7 +21,7 @@ def bombcode_day(d): return reduce(d)
 def bombcode_full(m,d,y): return reduce(m + d + y)
 
 def classify(day_bc, full_bc):
-    day_bc = int(day_bc)   # FIX: force int to avoid float in set error
+    day_bc = int(day_bc)   # prevent float in set
     full_bc = int(full_bc)
     if day_bc in {3,5,6,7,8,9}:
         return "High" if day_bc in {3,7,5,9} else "Low"
@@ -58,23 +58,25 @@ if st.button("RUN BACKTEST", type="primary"):
         df['full_bc'] = df.index.map(lambda d: bombcode_full(d.month, d.day, d.year))
         df['day_cls'] = df.apply(lambda r: classify(r['day_bc'], r['full_bc']), axis=1)
 
-        # Trades
+        # Trades - SAFE SCALAR VERSION
         trades = []
         FEE = 0.0008 * 2  # round-trip
-
         for i in range(len(df) - 1):
             row = df.iloc[i]
             next_row = df.iloc[i+1]
 
-            if row['day_cls'] == "High":
-                entry = row['High']
-                exit_price = next_row['Close']
+            # Force scalar string
+            day_cls_scalar = row.at['day_cls'] if pd.notna(row.at['day_cls']) else None
+
+            if day_cls_scalar == "High":
+                entry = float(row.at['High'])
+                exit_price = float(next_row.at['Close'])
                 pnl = (entry - exit_price) / entry - FEE
                 trades.append({'time': row.name, 'type': 'SHORT', 'pnl': pnl})
 
-            elif row['day_cls'] == "Low":
-                entry = row['Low']
-                exit_price = next_row['Close']
+            elif day_cls_scalar == "Low":
+                entry = float(row.at['Low'])
+                exit_price = float(next_row.at['Close'])
                 pnl = (exit_price - entry) / entry - FEE
                 trades.append({'time': row.name, 'type': 'LONG', 'pnl': pnl})
 
@@ -109,4 +111,4 @@ if st.button("RUN BACKTEST", type="primary"):
         st.success("BACKTEST COMPLETE!")
         st.dataframe(trades_df.tail(20).style.format({'pnl': '{:.2%}'}))
 
-st.caption("Daily high/low version - no hourly data, no chunking errors. Full history works.")
+st.caption("Daily high/low version - fixed float/int & scalar extraction. Full history works.")
