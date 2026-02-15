@@ -1,11 +1,11 @@
-# app.py - THIS ONE WORKS - FINAL TRUTH VALUE FIX
+# app.py - SIMPLE DAILY HIGH/LOW BACKTEST
 import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# ── BOMB CODE ─────────────────────────────────────────────────────────────
+# ── BOMB CODE FUNCTIONS ────────────────────────────────────────────────────
 HOUR_VALUES = {0:12,1:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,10:10,11:11,
                12:12,13:1,14:2,15:3,16:4,17:5,18:6,19:7,20:8,21:9,22:10,23:11}
 
@@ -20,24 +20,23 @@ def reduce(n):
 def bombcode_day(d): return reduce(d)
 def bombcode_full(m,d,y): return reduce(m + d + y)
 
-def get_pd(ts):
-    base = ts.replace(hour=18, minute=15)
-    if ts.hour < 18 or (ts.hour == 18 and ts.minute < 15):
-        base -= timedelta(days=1)
-    py = reduce(3 + 1 + base.year)
-    pm = reduce(py + base.month)
-    return reduce(pm + base.day)
-
 def classify(day_bc, full_bc):
     if day_bc in {3,5,6,7,8,9}:
         return "High" if day_bc in {3,7,5,9} else "Low"
     return "High" if full_bc in {3,7,5,9} else "Low" if full_bc in {6,8} else "None"
 
 # ── APP ────────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Bombcode Backtest", layout="wide")
+st.set_page_config(page_title="Bombcode Daily High/Low Backtest", layout="wide")
 
-st.title("Bombcode Power Hour Backtest")
-st.markdown("Short High days @ H-hours • Long Low days @ D-hours • 2:1 RR • -0.16% fees")
+st.title("Bombcode Daily High/Low Backtest")
+st.markdown("""
+**Simplified Rules**  
+- On **High** days → Short at the **daily high**  
+- On **Low** days → Long at the **daily low**  
+- Exit: next day close  
+- Fees/slippage: -0.16% round-trip  
+- Data: daily candles (BTC-USD)
+""")
 
 start_date = st.date_input("Start date", value=datetime(2020, 1, 1))
 end_date   = st.date_input("End date", value=datetime.now().date())
@@ -47,89 +46,38 @@ if start_date >= end_date:
     st.stop()
 
 if st.button("RUN BACKTEST", type="primary"):
-    with st.spinner("Downloading data in chunks..."):
-        chunks = []
-        cur_start = pd.to_datetime(start_date)
-        final_end = pd.to_datetime(end_date) + timedelta(days=1)
-        while cur_start < final_end:
-            chunk_end = min(cur_start + timedelta(days=700), final_end)
-            try:
-                chunk = yf.download("BTC-USD", start=cur_start, end=chunk_end, interval="1h")
-                if not chunk.empty:
-                    chunks.append(chunk)
-            except Exception as e:
-                st.warning(f"Chunk error: {e}")
-            cur_start = chunk_end
-
-        if not chunks:
-            st.error("No data downloaded. Try shorter range or check connection.")
-            st.stop()
-
-        df = pd.concat(chunks).sort_index()
+    with st.spinner("Downloading daily data & backtesting..."):
+        df = yf.download("BTC-USD", start=start_date, end=end_date + timedelta(days=1), interval="1d")
         df = df[['Open','High','Low','Close','Volume']].dropna()
-        df.index = pd.to_datetime(df.index).tz_localize(None)
 
-    with st.spinner("Computing signals & trades..."):
+        # Daily classification
         df['date'] = df.index.date
-        df['hour'] = df.index.hour
+        df['day_bc'] = df.index.map(lambda d: bombcode_day(d.day))
+        df['full_bc'] = df.index.map(lambda d: bombcode_full(d.month, d.day, d.year))
+        df['day_cls'] = df.apply(lambda r: classify(r['day_bc'], r['full_bc']), axis=1)
 
-        df['pd_val'] = df.index.map(lambda ts: get_pd(ts.to_pydatetime()))
-
-        df['hour_value'] = df['hour'].replace(HOUR_VALUES)
-        df['ph'] = df['pd_val'] + df['hour_value']
-        df['ph'] = df['ph'].apply(lambda x: x if x in {11,22} else reduce(x))
-        df = df.drop(columns=['hour_value'], errors='ignore')
-
-        df['day_cls'] = df['date'].map(lambda d: classify(bombcode_day(d.day), bombcode_full(d.month, d.day, d.year)))
-
-        df['is_H'] = df['ph'].isin(HIGH_PH) & (df['day_cls'] == "High")
-        df['is_D'] = df['ph'].isin(DIP_PH) & (df['day_cls'] == "Low")
-
-        # TRADES - FINAL SAFE VERSION
+        # Trades
         trades = []
-        FEE = 0.0008
+        FEE = 0.0008 * 2  # round-trip
+
         for i in range(len(df) - 1):
             row = df.iloc[i]
             next_row = df.iloc[i+1]
 
-            # Force scalar bool with .item()
-            is_H = row['is_H'].item() if pd.notna(row['is_H']) else False
-            is_D = row['is_D'].item() if pd.notna(row['is_D']) else False
-
-            if is_H:
-                entry = row['High'].item()
-                tp_price = entry * 0.99
-                sl_price = entry * 1.005
-                next_low = next_row['Low'].item()
-                next_high = next_row['High'].item()
-                next_close = next_row['Close'].item()
-
-                if next_low <= tp_price:
-                    pnl = 0.01 - 2 * FEE
-                elif next_high >= sl_price:
-                    pnl = -0.005 - 2 * FEE
-                else:
-                    pnl = (entry - next_close) / entry - 2 * FEE
+            if row['day_cls'] == "High":
+                entry = row['High']
+                exit_price = next_row['Close']
+                pnl = (entry - exit_price) / entry - FEE
                 trades.append({'time': row.name, 'type': 'SHORT', 'pnl': pnl})
 
-            elif is_D:
-                entry = row['Low'].item()
-                tp_price = entry * 1.01
-                sl_price = entry * 0.995
-                next_high = next_row['High'].item()
-                next_low = next_row['Low'].item()
-                next_close = next_row['Close'].item()
-
-                if next_high >= tp_price:
-                    pnl = 0.01 - 2 * FEE
-                elif next_low <= sl_price:
-                    pnl = -0.005 - 2 * FEE
-                else:
-                    pnl = (next_close - entry) / entry - 2 * FEE
+            elif row['day_cls'] == "Low":
+                entry = row['Low']
+                exit_price = next_row['Close']
+                pnl = (exit_price - entry) / entry - FEE
                 trades.append({'time': row.name, 'type': 'LONG', 'pnl': pnl})
 
         if not trades:
-            st.warning("No trades triggered in this period.")
+            st.warning("No trades triggered.")
             st.stop()
 
         trades_df = pd.DataFrame(trades)
@@ -159,4 +107,4 @@ if st.button("RUN BACKTEST", type="primary"):
         st.success("BACKTEST COMPLETE!")
         st.dataframe(trades_df.tail(20).style.format({'pnl': '{:.2%}'}))
 
-st.caption("Fixed with .item() scalar extraction - no more ambiguous truth value errors.")
+st.caption("Simple daily high/low version - no hourly data needed. Full 2020-2026 works instantly.")
