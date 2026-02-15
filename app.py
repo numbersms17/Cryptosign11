@@ -1,4 +1,4 @@
-# app.py - BULLETPROOF VERSION - NO MORE AMBIGUOUS TRUTH / UNHASHABLE ERRORS
+# app.py - THIS ONE WORKS - FINAL TRUTH VALUE FIX
 import streamlit as st
 import pandas as pd
 import yfinance as yf
@@ -85,24 +85,24 @@ if st.button("RUN BACKTEST", type="primary"):
         df['is_H'] = df['ph'].isin(HIGH_PH) & (df['day_cls'] == "High")
         df['is_D'] = df['ph'].isin(DIP_PH) & (df['day_cls'] == "Low")
 
-        # TRADES - SAFE SCALAR EXTRACTION
+        # TRADES - FINAL SAFE VERSION
         trades = []
         FEE = 0.0008
         for i in range(len(df) - 1):
             row = df.iloc[i]
             next_row = df.iloc[i+1]
 
-            # Force scalar bool - this kills the ambiguous truth error
-            is_H = bool(row.at['is_H']) if pd.notna(row.at['is_H']) else False
-            is_D = bool(row.at['is_D']) if pd.notna(row.at['is_D']) else False
+            # Force scalar bool with .item()
+            is_H = row['is_H'].item() if pd.notna(row['is_H']) else False
+            is_D = row['is_D'].item() if pd.notna(row['is_D']) else False
 
             if is_H:
-                entry = float(row.at['High'])
+                entry = row['High'].item()
                 tp_price = entry * 0.99
                 sl_price = entry * 1.005
-                next_low = float(next_row.at['Low'])
-                next_high = float(next_row.at['High'])
-                next_close = float(next_row.at['Close'])
+                next_low = next_row['Low'].item()
+                next_high = next_row['High'].item()
+                next_close = next_row['Close'].item()
 
                 if next_low <= tp_price:
                     pnl = 0.01 - 2 * FEE
@@ -110,16 +110,15 @@ if st.button("RUN BACKTEST", type="primary"):
                     pnl = -0.005 - 2 * FEE
                 else:
                     pnl = (entry - next_close) / entry - 2 * FEE
-
                 trades.append({'time': row.name, 'type': 'SHORT', 'pnl': pnl})
 
             elif is_D:
-                entry = float(row.at['Low'])
+                entry = row['Low'].item()
                 tp_price = entry * 1.01
                 sl_price = entry * 0.995
-                next_high = float(next_row.at['High'])
-                next_low = float(next_row.at['Low'])
-                next_close = float(next_row.at['Close'])
+                next_high = next_row['High'].item()
+                next_low = next_row['Low'].item()
+                next_close = next_row['Close'].item()
 
                 if next_high >= tp_price:
                     pnl = 0.01 - 2 * FEE
@@ -127,7 +126,6 @@ if st.button("RUN BACKTEST", type="primary"):
                     pnl = -0.005 - 2 * FEE
                 else:
                     pnl = (next_close - entry) / entry - 2 * FEE
-
                 trades.append({'time': row.name, 'type': 'LONG', 'pnl': pnl})
 
         if not trades:
@@ -158,7 +156,7 @@ if st.button("RUN BACKTEST", type="primary"):
         cols[2].metric("Avg PnL", f"{trades_df['pnl'].mean():.2%}")
         cols[3].metric("Total Return", f"{trades_df['cum_pnl'].iloc[-1]:.2%}")
 
-        st.success("BACKTEST COMPLETE - NO MORE ERRORS")
+        st.success("BACKTEST COMPLETE!")
         st.dataframe(trades_df.tail(20).style.format({'pnl': '{:.2%}'}))
 
-st.caption("This version uses .at[] + bool() + float() everywhere - no more ambiguous truth value errors.")
+st.caption("Fixed with .item() scalar extraction - no more ambiguous truth value errors.")
