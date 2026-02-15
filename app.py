@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 
 # ── BOMB CODE LOGIC ────────────────────────────────────────────────
 def reduce(n):
-    while n > 9 and n not in {11, 22}:
+    # Changed: no longer protect 11/22 — reduce everything >9 to single digit
+    while n > 9:
         n = sum(int(c) for c in str(n))
     return n
 
@@ -114,7 +115,7 @@ def scan_full_bc_sequences(df, min_length=4):
                         'Bias': bias
                     })
                 except:
-                    pass  # skip invalid chain
+                    pass
             current_chain = []
             start_idx = None
             continue
@@ -188,7 +189,7 @@ def scan_full_bc_sequences(df, min_length=4):
     return chain_df, pattern_stats
 
 # ── Main App ───────────────────────────────────────────────────────
-st.title("BTC Bombcode Analyzer – Sequence Scanner (Scalar Fixed)")
+st.title("BTC Bombcode Analyzer – Masters Reduced (11→2, 22→4)")
 
 now = datetime.now(timezone.utc)
 info = get_current_info(now)
@@ -207,7 +208,7 @@ st.divider()
 df = load_historical_data()
 
 if df is not None:
-    st.subheader("Single-Day Backtest")
+    st.subheader("Single-Day Backtest (with reduced masters)")
     by_cls, top_combos, day_bc_only, full_bc_only = compute_single_stats(df)
     st.text("By Classification:\n" + by_cls.to_string())
     st.text("Top Combos (min 30 days):\n" + top_combos.to_string())
@@ -217,7 +218,7 @@ if df is not None:
     st.divider()
 
     st.subheader("Full_BC Sequence Scanner (Consecutive Chains)")
-    st.info("Detects ascending full_bc chains ≥4 days (with 9→1 wrap). Stats sorted by winrate. Bias from actual returns.")
+    st.info("Detects ascending full_bc chains ≥4 days (with 9→1 wrap). Masters now reduced (11→2, 22→4). Stats sorted by winrate.")
     chain_df, pattern_stats = scan_full_bc_sequences(df, min_length=4)
     if pattern_stats is not None:
         st.text("Pattern Stats (High Winrate First):\n" + pattern_stats.to_string())
@@ -227,4 +228,4 @@ if df is not None:
 else:
     st.error("Failed to load BTC data.")
 
-st.caption("yfinance daily • Full scalar-safe • Winrate-focused")
+st.caption("yfinance daily • Masters reduced • Scalar-safe scanner")
