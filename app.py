@@ -80,19 +80,16 @@ def compute_single_stats(df):
     full_bc_only = df.groupby('full_bc')['Return'].mean().sort_values(ascending=False).round(2)
     return by_cls, top_combos, day_bc_only, full_bc_only
 
-# ── Price Swing Scanner – Big Moves ────────────────────────────────
-def scan_price_swings(df, min_days=4, max_days=10, threshold_pct=10):
+# ── Price Swing Scanner – Big Up/Down Moves ─────────────────────────
+def scan_price_swings(df, min_days=4, max_days=10, threshold_pct=5):
     swings = []
     skipped = 0
     for length in range(min_days, max_days + 1):
         for start in range(len(df) - length):
             slice_df = df.iloc[start:start+length]
             try:
-                # Force scalar extraction with .values[0] + item/float
-                open_raw = slice_df['Open'].values[0]
-                close_raw = slice_df['Close'].values[-1]
-                open_price = float(open_raw.item() if hasattr(open_raw, 'item') else open_raw)
-                close_price = float(close_raw.item() if hasattr(close_raw, 'item') else close_raw)
+                open_price = float(slice_df['Open'].values[0])
+                close_price = float(slice_df['Close'].values[-1])
                 total_return = (close_price / open_price - 1) * 100
                 if abs(total_return) >= threshold_pct:
                     start_date = slice_df.index[0].date()
@@ -101,12 +98,14 @@ def scan_price_swings(df, min_days=4, max_days=10, threshold_pct=10):
                     end_full_bc = float(slice_df['full_bc'].values[-1])
                     start_day_bc = float(slice_df['day_bc'].values[0])
                     direction = 'UP (Top/Short)' if total_return >= threshold_pct else 'DOWN (Bottom/Long)'
+                    period = 'Pre-2021' if start_date.year < 2021 else 'Post-2021'
                     swings.append({
                         'Start_Date': start_date,
                         'End_Date': end_date,
                         'Length': length,
                         'Total_Return (%)': round(total_return, 2),
                         'Direction': direction,
+                        'Period': period,
                         'Start_full_bc': start_full_bc,
                         'End_full_bc': end_full_bc,
                         'Start_day_bc': start_day_bc
@@ -115,23 +114,26 @@ def scan_price_swings(df, min_days=4, max_days=10, threshold_pct=10):
                 skipped += 1
                 continue
     swing_df = pd.DataFrame(swings)
-    st.write(f"Scanned swings: {len(swings)} found, {skipped} skipped due to indexing issues.")
+    st.write(f"Scanned swings: {len(swings)} found, {skipped} skipped.")
     if swing_df.empty:
-        return None, None
+        return None, None, None, None
     start_stats = swing_df.groupby('Start_full_bc').agg({
         'Total_Return (%)': ['count', 'mean', lambda x: (x > 0).mean() * 100],
         'Direction': lambda x: x.mode()[0] if not x.empty else 'MIXED'
     }).round(2)
     start_stats.columns = ['Count', 'Avg_Return', 'Up_Pct', 'Common_Dir']
     start_stats = start_stats.sort_values('Avg_Return', ascending=False)
-    return swing_df, start_stats
+    pre_2021 = swing_df[swing_df['Period'] == 'Pre-2021']
+    post_2021 = swing_df[swing_df['Period'] == 'Post-2021']
+    pre_stats = pre_2021.groupby('Start_full_bc')['Total_Return (%)'].mean().sort_values(ascending=False).round(2)
+    post_stats = post_2021.groupby('Start_full_bc')['Total_Return (%)'].mean().sort_values(ascending=False).round(2)
+    return swing_df, start_stats, pre_stats, post_stats
 
 # ── Month-End vs Month-Start Bias ──────────────────────────────────
 def month_bias(df):
     monthly = df.resample('M').agg({
         'Open': 'first',
-        'Close': 'last',
-        'Return': 'sum'
+        'Close': 'last'
     })
     monthly['Monthly_Return (%)'] = (monthly['Close'] / monthly['Open'] - 1) * 100
     monthly['Month_End_Bias'] = monthly['Monthly_Return (%)'].apply(
@@ -140,7 +142,7 @@ def month_bias(df):
     return monthly[['Monthly_Return (%)', 'Month_End_Bias']]
 
 # ── Main App ───────────────────────────────────────────────────────
-st.title("BTC Bombcode Analyzer – Price Swing Scanner (Fixed)")
+st.title("BTC Bombcode Analyzer – Price Swing Scanner (5% Threshold)")
 
 now = datetime.now(timezone.utc)
 info = get_current_info(now)
@@ -168,14 +170,16 @@ if df is not None:
 
     st.divider()
 
-    st.subheader("Price Swing Scanner – Big Moves (≥10% over 4–10 days)")
-    st.info("Detects strong up/down swings. Start_full_bc shows entry bias (e.g. high numbers start drops → short).")
-    swing_df, start_stats = scan_price_swings(df, min_days=4, max_days=10, threshold_pct=10)
+    st.subheader("Price Swing Scanner – Big Moves (≥5% over 4–10 days)")
+    st.info("Catches more swings (especially pre-2021). Start_full_bc shows entry bias. DOWN swings = potential long bottoms, UP swings = potential short tops.")
+    swing_df, start_stats, pre_stats, post_stats = scan_price_swings(df, min_days=4, max_days=10, threshold_pct=5)
     if start_stats is not None:
-        st.text("Swing Stats by Start full_bc (Entry Bias):\n" + start_stats.to_string())
+        st.text("Swing Stats by Start full_bc (All Time):\n" + start_stats.to_string())
+        st.text("Pre-2021 Avg Return by Start full_bc:\n" + pre_stats.to_string())
+        st.text("Post-2021 Avg Return by Start full_bc:\n" + post_stats.to_string())
         st.text("Detected Swings Sample (first 20):\n" + swing_df.head(20).to_string(index=False))
     else:
-        st.warning("No swings ≥10% found. Lower threshold_pct to 5 or 8 in code if needed.")
+        st.warning("No swings ≥5% found. Try lowering threshold_pct to 3 in code if needed.")
 
     st.divider()
 
@@ -187,4 +191,4 @@ if df is not None:
 else:
     st.error("Failed to load BTC data.")
 
-st.caption("yfinance daily • Scalar-safe swing scanner • Bottom/top detection")
+st.caption("yfinance daily • 5% threshold for more swings • Pre/Post 2021 split • Bottom/top detection")
