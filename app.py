@@ -80,18 +80,23 @@ def compute_single_stats(df):
     full_bc_only = df.groupby('full_bc')['Return'].mean().sort_values(ascending=False).round(2)
     return by_cls, top_combos, day_bc_only, full_bc_only
 
-# ── Full_BC Sequence Scanner (fixed) ───────────────────────────────
+# ── Full_BC Sequence Scanner ───────────────────────────────────────
 def scan_full_bc_sequences(df, min_length=4):
     chains = []
     current_chain = []
     start_idx = None
     for i in range(len(df)):
-        curr = df.iloc[i]['full_bc']
+        try:
+            curr = df.iloc[i]['full_bc'].item() if hasattr(df.iloc[i]['full_bc'], 'item') else float(df.iloc[i]['full_bc'])
+            if pd.isna(curr):
+                curr = np.nan
+        except:
+            curr = np.nan
+
         if pd.isna(curr):
-            if current_chain:
-                # Save chain before NaN break
-                chain_return = (df.iloc[i-1]['Close'] / df.iloc[start_idx]['Open'] - 1) * 100 if start_idx is not None else 0
-                start_date = df.index[start_idx].date() if start_idx is not None else None
+            if current_chain and start_idx is not None:
+                chain_return = (df.iloc[i-1]['Close'] / df.iloc[start_idx]['Open'] - 1) * 100
+                start_date = df.index[start_idx].date()
                 end_date = df.index[i-1].date()
                 seq_str = '→'.join(map(str, current_chain))
                 bias = 'LONG' if chain_return > 0 else 'SHORT'
@@ -106,20 +111,20 @@ def scan_full_bc_sequences(df, min_length=4):
             current_chain = []
             start_idx = None
             continue
-        curr = float(curr)  # ensure scalar
+
         if not current_chain:
             current_chain = [curr]
             start_idx = i
             continue
+
         prev = current_chain[-1]
-        # Safe scalar comparison
-        is_consecutive = (curr == prev + 1) or (prev == 9 and curr == 1)
-        # Optional master jump (simplified, your examples don't need complex)
-        is_master_jump = False  # disable if not needed, or add (prev == 1 and curr == 11)
-        if is_consecutive or is_master_jump:
+        is_consecutive = (curr == prev + 1)
+        is_wrap = (prev == 9 and curr == 1)
+
+        if is_consecutive or is_wrap:
             current_chain.append(curr)
         else:
-            if len(current_chain) >= min_length:
+            if len(current_chain) >= min_length and start_idx is not None:
                 chain_return = (df.iloc[i-1]['Close'] / df.iloc[start_idx]['Open'] - 1) * 100
                 start_date = df.index[start_idx].date()
                 end_date = df.index[i-1].date()
@@ -135,8 +140,9 @@ def scan_full_bc_sequences(df, min_length=4):
                 })
             current_chain = [curr]
             start_idx = i
+
     # Last chain
-    if len(current_chain) >= min_length:
+    if len(current_chain) >= min_length and start_idx is not None:
         chain_return = (df.iloc[-1]['Close'] / df.iloc[start_idx]['Open'] - 1) * 100
         start_date = df.index[start_idx].date()
         end_date = df.index[-1].date()
@@ -150,9 +156,11 @@ def scan_full_bc_sequences(df, min_length=4):
             'Return': round(chain_return, 2),
             'Bias': bias
         })
+
     chain_df = pd.DataFrame(chains)
     if chain_df.empty:
         return None, None
+
     pattern_stats = chain_df.groupby('Sequence').agg({
         'Length': 'mean',
         'Return': ['count', 'mean', 'std', lambda x: (x > 0).mean() * 100],
@@ -163,7 +171,7 @@ def scan_full_bc_sequences(df, min_length=4):
     return chain_df, pattern_stats
 
 # ── Main App ───────────────────────────────────────────────────────
-st.title("BTC Bombcode Analyzer – Sequence Scanner (Fixed)")
+st.title("BTC Bombcode Analyzer – Sequence Scanner (Final Fix)")
 
 now = datetime.now(timezone.utc)
 info = get_current_info(now)
@@ -202,4 +210,4 @@ if df is not None:
 else:
     st.error("Failed to load BTC data.")
 
-st.caption("yfinance daily • Fixed sequence scanner • Scalar-safe")
+st.caption("yfinance daily • Scalar-safe scanner • Winrate-focused")
