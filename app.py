@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import numpy as np
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 # ── BOMB CODE LOGIC ────────────────────────────────────────────────
 def reduce(n):
@@ -80,20 +80,43 @@ def compute_single_stats(df):
     full_bc_only = df.groupby('full_bc')['Return'].mean().sort_values(ascending=False).round(2)
     return by_cls, top_combos, day_bc_only, full_bc_only
 
-# ── Full_BC Sequence Scanner ───────────────────────────────────────
+# ── Full_BC Sequence Scanner (fixed) ───────────────────────────────
 def scan_full_bc_sequences(df, min_length=4):
     chains = []
     current_chain = []
     start_idx = None
     for i in range(len(df)):
         curr = df.iloc[i]['full_bc']
+        if pd.isna(curr):
+            if current_chain:
+                # Save chain before NaN break
+                chain_return = (df.iloc[i-1]['Close'] / df.iloc[start_idx]['Open'] - 1) * 100 if start_idx is not None else 0
+                start_date = df.index[start_idx].date() if start_idx is not None else None
+                end_date = df.index[i-1].date()
+                seq_str = '→'.join(map(str, current_chain))
+                bias = 'LONG' if chain_return > 0 else 'SHORT'
+                chains.append({
+                    'Sequence': seq_str,
+                    'Length': len(current_chain),
+                    'Start_Date': start_date,
+                    'End_Date': end_date,
+                    'Return': round(chain_return, 2),
+                    'Bias': bias
+                })
+            current_chain = []
+            start_idx = None
+            continue
+        curr = float(curr)  # ensure scalar
         if not current_chain:
             current_chain = [curr]
             start_idx = i
             continue
         prev = current_chain[-1]
-        # Ascending consecutive, wrap 9→1, or master-like jumps (1→11, 10→11, etc.)
-        if curr == prev + 1 or (prev == 9 and curr == 1) or (prev in {1, 10, 21} and curr in {11, 22}):
+        # Safe scalar comparison
+        is_consecutive = (curr == prev + 1) or (prev == 9 and curr == 1)
+        # Optional master jump (simplified, your examples don't need complex)
+        is_master_jump = False  # disable if not needed, or add (prev == 1 and curr == 11)
+        if is_consecutive or is_master_jump:
             current_chain.append(curr)
         else:
             if len(current_chain) >= min_length:
@@ -140,7 +163,7 @@ def scan_full_bc_sequences(df, min_length=4):
     return chain_df, pattern_stats
 
 # ── Main App ───────────────────────────────────────────────────────
-st.title("BTC Bombcode Analyzer – Sequence Scanner")
+st.title("BTC Bombcode Analyzer – Sequence Scanner (Fixed)")
 
 now = datetime.now(timezone.utc)
 info = get_current_info(now)
@@ -169,14 +192,14 @@ if df is not None:
     st.divider()
 
     st.subheader("Full_BC Sequence Scanner (Consecutive Chains)")
-    st.info("Detects ascending full_bc chains (min 4 days). Shows patterns, returns, winrate. Sorted high winrate first.")
+    st.info("Detects ascending full_bc chains ≥4 days (with 9→1 wrap). Stats sorted by winrate. Bias from actual returns.")
     chain_df, pattern_stats = scan_full_bc_sequences(df, min_length=4)
     if pattern_stats is not None:
         st.text("Pattern Stats (High Winrate First):\n" + pattern_stats.to_string())
         st.text("Detected Chains Sample (first 20):\n" + chain_df.head(20).to_string(index=False))
     else:
-        st.warning("No consecutive full_bc chains ≥4 days found.")
+        st.warning("No qualifying full_bc chains found.")
 else:
-    st.error("Failed to load BTC data. Check yfinance.")
+    st.error("Failed to load BTC data.")
 
-st.caption("yfinance daily • Sequence scanner for patterns like 8→9→1→11→3...")
+st.caption("yfinance daily • Fixed sequence scanner • Scalar-safe")
