@@ -84,7 +84,7 @@ def compute_stats(df):
     
     return by_cls, strong_combos, by_day_bc, by_full_bc
 
-# ── Swing scanner (fixed aggregation) ──────────────────────────────
+# ── Swing scanner ──────────────────────────────────────────────────
 def scan_swings(df, min_days=4, max_days=10, threshold_pct=10):
     swings = []
     for length in range(min_days, max_days + 1):
@@ -115,7 +115,6 @@ def scan_swings(df, min_days=4, max_days=10, threshold_pct=10):
     
     swing_df = pd.DataFrame(swings)
     
-    # Fixed aggregation - use dict with tuples for renaming
     stats = swing_df.groupby('Start_full_bc').agg(
         Count=('Start_full_bc', 'size'),
         Avg_Return=('% Return', 'mean'),
@@ -125,18 +124,16 @@ def scan_swings(df, min_days=4, max_days=10, threshold_pct=10):
     return swing_df, stats
 
 # ── App ────────────────────────────────────────────────────────────
-st.title("BTC Numerology Analyzer – 2022–2025 Focus")
+st.title("BTC Numerology Analyzer – 2022–2025 Focus (Plain Text Output)")
 
 now = datetime.now(timezone.utc)
 info = get_current_info(now)
 
 st.subheader("Today")
-st.markdown(f"""
-**Classification**: {info['cls']}  
-**day_bc**: {info['day_bc']}  
-**full_bc**: {info['full_bc']}  
-{info['signal']}
-""")
+st.text(f"Classification: {info['cls']}")
+st.text(f"day_bc: {info['day_bc']}")
+st.text(f"full_bc: {info['full_bc']}")
+st.text(info['signal'])
 st.caption(f"Updated: {now.strftime('%Y-%m-%d %H:%M UTC')}")
 
 st.divider()
@@ -148,24 +145,16 @@ if df is not None and not df.empty:
     by_cls, strong_combos, by_day_bc, by_full_bc = compute_stats(df)
     
     st.markdown("**By Classification**")
-    st.dataframe(by_cls.style.format({
-        'Avg_Return': '{:.2f}%',
-        'Median_Return': '{:.2f}%',
-        'Volatility': '{:.2f}%'
-    }))
+    st.text(by_cls.to_string())
     
     st.markdown("**Strongest combos (≥20 days, sorted by avg return)**")
-    st.dataframe(strong_combos.style.format({
-        'Avg_Return': '{:.2f}%'
-    }))
+    st.text(strong_combos.head(15).to_string())
     
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**By day_bc (avg return)**")
-        st.dataframe(by_day_bc.to_frame(name='%'))
-    with col2:
-        st.markdown("**By full_bc (avg return)**")
-        st.dataframe(by_full_bc.to_frame(name='%'))
+    st.markdown("**By day_bc (avg return)**")
+    st.text(by_day_bc.to_string())
+    
+    st.markdown("**By full_bc (avg return)**")
+    st.text(by_full_bc.to_string())
     
     st.divider()
     
@@ -173,13 +162,10 @@ if df is not None and not df.empty:
     swing_df, swing_stats = scan_swings(df)
     if swing_stats is not None:
         st.markdown("**Bias by starting full_bc**")
-        st.dataframe(swing_stats.style.format({
-            'Avg_Return': '{:.2f}%',
-            'Up_Pct': '{:.1f}%'
-        }))
+        st.text(swing_stats.to_string())
         
-        st.markdown("**Recent big swings**")
-        st.dataframe(swing_df.tail(15))
+        st.markdown("**Recent big swings (last 15)**")
+        st.text(swing_df.tail(15).to_string(index=False))
     else:
         st.warning("No big swings detected. Lower threshold to 7–8% if needed.")
 
