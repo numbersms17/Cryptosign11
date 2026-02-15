@@ -80,22 +80,26 @@ def compute_single_stats(df):
     full_bc_only = df.groupby('full_bc')['Return'].mean().sort_values(ascending=False).round(2)
     return by_cls, top_combos, day_bc_only, full_bc_only
 
-# ── Price Swing Scanner: Big Up/Down Moves ─────────────────────────
+# ── Price Swing Scanner – Big Moves ────────────────────────────────
 def scan_price_swings(df, min_days=4, max_days=10, threshold_pct=10):
     swings = []
+    skipped = 0
     for length in range(min_days, max_days + 1):
         for start in range(len(df) - length):
             slice_df = df.iloc[start:start+length]
             try:
-                open_price = slice_df['Open'].iloc[0].item()
-                close_price = slice_df['Close'].iloc[-1].item()
+                # Force scalar extraction with .values[0] + item/float
+                open_raw = slice_df['Open'].values[0]
+                close_raw = slice_df['Close'].values[-1]
+                open_price = float(open_raw.item() if hasattr(open_raw, 'item') else open_raw)
+                close_price = float(close_raw.item() if hasattr(close_raw, 'item') else close_raw)
                 total_return = (close_price / open_price - 1) * 100
                 if abs(total_return) >= threshold_pct:
                     start_date = slice_df.index[0].date()
                     end_date = slice_df.index[-1].date()
-                    start_full_bc = slice_df['full_bc'].iloc[0]
-                    end_full_bc = slice_df['full_bc'].iloc[-1]
-                    start_day_bc = slice_df['day_bc'].iloc[0]
+                    start_full_bc = float(slice_df['full_bc'].values[0])
+                    end_full_bc = float(slice_df['full_bc'].values[-1])
+                    start_day_bc = float(slice_df['day_bc'].values[0])
                     direction = 'UP (Top/Short)' if total_return >= threshold_pct else 'DOWN (Bottom/Long)'
                     swings.append({
                         'Start_Date': start_date,
@@ -107,12 +111,13 @@ def scan_price_swings(df, min_days=4, max_days=10, threshold_pct=10):
                         'End_full_bc': end_full_bc,
                         'Start_day_bc': start_day_bc
                     })
-            except:
-                continue  # skip invalid slice
+            except Exception:
+                skipped += 1
+                continue
     swing_df = pd.DataFrame(swings)
+    st.write(f"Scanned swings: {len(swings)} found, {skipped} skipped due to indexing issues.")
     if swing_df.empty:
         return None, None
-    # Stats by start full_bc (entry bias)
     start_stats = swing_df.groupby('Start_full_bc').agg({
         'Total_Return (%)': ['count', 'mean', lambda x: (x > 0).mean() * 100],
         'Direction': lambda x: x.mode()[0] if not x.empty else 'MIXED'
@@ -135,7 +140,7 @@ def month_bias(df):
     return monthly[['Monthly_Return (%)', 'Month_End_Bias']]
 
 # ── Main App ───────────────────────────────────────────────────────
-st.title("BTC Bombcode Analyzer – Price Swing Scanner")
+st.title("BTC Bombcode Analyzer – Price Swing Scanner (Fixed)")
 
 now = datetime.now(timezone.utc)
 info = get_current_info(now)
@@ -164,22 +169,22 @@ if df is not None:
     st.divider()
 
     st.subheader("Price Swing Scanner – Big Moves (≥10% over 4–10 days)")
-    st.info("Detects historical periods with strong up/down moves. Look at Start_full_bc for entry bias (e.g. certain numbers start big drops → short).")
+    st.info("Detects strong up/down swings. Start_full_bc shows entry bias (e.g. high numbers start drops → short).")
     swing_df, start_stats = scan_price_swings(df, min_days=4, max_days=10, threshold_pct=10)
     if start_stats is not None:
         st.text("Swing Stats by Start full_bc (Entry Bias):\n" + start_stats.to_string())
         st.text("Detected Swings Sample (first 20):\n" + swing_df.head(20).to_string(index=False))
     else:
-        st.warning("No swings ≥10% found (try lowering threshold_pct to 5 or 8 in code).")
+        st.warning("No swings ≥10% found. Lower threshold_pct to 5 or 8 in code if needed.")
 
     st.divider()
 
     st.subheader("Month-End vs Month-Start Bias")
-    st.info("Monthly close performance – strong close up = potential top/short, strong close down = potential bottom/long.")
+    st.info("Monthly performance – strong close up = top/short, strong close down = bottom/long.")
     month_df = month_bias(df)
     st.text("Monthly Bias Summary:\n" + month_df.to_string())
 
 else:
     st.error("Failed to load BTC data.")
 
-st.caption("yfinance daily • Price swing focus • Bottom/Top of month check • Scalar-safe")
+st.caption("yfinance daily • Scalar-safe swing scanner • Bottom/top detection")
