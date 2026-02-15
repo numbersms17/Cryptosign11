@@ -1,175 +1,219 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import numpy as np
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from collections import defaultdict
 
-# ── BOMB CODE LOGIC ────────────────────────────────────────────────
+# ── Reduce & bombcode ──────────────────────────────────────────────
 def reduce(n):
-    while n > 9:
+    while n > 9 and n not in {11, 22}:
         n = sum(int(c) for c in str(n))
     return n
 
-def bombcode_day(d):
-    return reduce(d)
-
-def bombcode_full(m, d, y):
+def bombcode(m, d, y):
     return reduce(m + d + y)
 
-def classify(day_bc, full_bc):
-    if day_bc in {3, 5, 6, 7, 8, 9}:
-        return "High" if day_bc in {3, 7, 5, 9} else "Low"
-    return "High" if full_bc in {3, 7, 5, 9} else "Low" if full_bc in {6, 8} else "None"
+# ── Hour values & PH ───────────────────────────────────────────────
+HOUR_VALUES = {
+    0:3,1:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,
+    10:1,11:2,12:3,13:1,14:2,15:3,16:4,17:5,18:6,
+    19:7,20:8,21:9,22:1,23:2
+}
 
-# ── Current day ────────────────────────────────────────────────────
-def get_current_info(now):
-    bc_d = bombcode_day(now.day)
-    bc_f = bombcode_full(now.month, now.day, now.year)
-    cls = classify(bc_d, bc_f)
-    return {
-        'cls': cls,
-        'day_bc': bc_d,
-        'full_bc': bc_f,
-        'signal': f"**{cls.upper()} day** (day_bc={bc_d} | full_bc={bc_f})"
-    }
+PEAK_PH = {3,6,9}
+DIP_PH = {7,11}
 
-# ── Load data 2022 → latest ────────────────────────────────────────
+def get_pd_for_timestamp(ts):
+    base = ts.replace(hour=18, minute=0, second=0, microsecond=0)
+    if ts.hour < 18:
+        base -= timedelta(days=1)
+    py = reduce(3 + 1 + base.year)
+    pm = reduce(py + base.month)
+    return reduce(pm + base.day)
+
+def get_ph(hour, pd):
+    val = HOUR_VALUES[hour]
+    ph = pd + val
+    return ph if ph in {11,22} else reduce(ph)
+
+# ── Load BTC prices ────────────────────────────────────────────────
 @st.cache_data(ttl=3600 * 6)
-def load_recent_data():
+def load_btc_prices(start_date, end_date):
     try:
-        df = yf.download('BTC-USD', start='2022-01-01', progress=False)
+        start_str = start_date.strftime('%Y-%m-%d')
+        end_str = (end_date + timedelta(days=1)).strftime('%Y-%m-%d')
+        df = yf.download('BTC-USD', start=start_str, end=end_str, progress=False)
         if df.empty:
             return None
-        df = df[['Open', 'Close']].copy()
-        df['Return'] = (df['Close'] / df['Open'] - 1) * 100
-        df['day_bc'] = df.index.day.map(bombcode_day)
-        df['full_bc'] = df.index.map(lambda dt: bombcode_full(dt.month, dt.day, dt.year))
-        
-        conditions = [
-            df['day_bc'].isin([3,5,6,7,8,9]) & df['day_bc'].isin([3,7,5,9]),
-            df['day_bc'].isin([3,5,6,7,8,9]) & ~df['day_bc'].isin([3,7,5,9]),
-            df['full_bc'].isin([3,7,5,9]),
-            df['full_bc'].isin([6,8])
-        ]
-        choices = ['High', 'Low', 'High', 'Low']
-        df['cls'] = np.select(conditions, choices, default='None')
-        
-        return df
+        return df['Close']
     except Exception as e:
-        st.error(f"Data load error: {str(e)}")
+        st.error(f"Price load error: {str(e)}")
         return None
 
-# ── Stats ──────────────────────────────────────────────────────────
-def compute_stats(df):
-    if df is None or df.empty:
-        return None, None, None, None
-    
-    by_cls = df.groupby('cls')['Return'].agg(
-        Days='count',
-        Avg_Return='mean',
-        Median_Return='median',
-        Win_Rate=lambda x: (x > 0).mean() * 100,
-        Volatility='std'
-    ).round(2)
-    
-    combos = df.groupby(['cls', 'day_bc', 'full_bc'])['Return'].agg(
-        Days='count',
-        Avg_Return='mean',
-        Win_Rate=lambda x: (x > 0).mean() * 100
-    ).round(2)
-    strong_combos = combos[combos['Days'] >= 20].sort_values('Avg_Return', ascending=False)
-    
-    by_day_bc = df.groupby('day_bc')['Return'].mean().sort_values(ascending=False).round(2)
-    by_full_bc = df.groupby('full_bc')['Return'].mean().sort_values(ascending=False).round(2)
-    
-    return by_cls, strong_combos, by_day_bc, by_full_bc
-
-# ── Swing scanner ──────────────────────────────────────────────────
-def scan_swings(df, min_days=4, max_days=10, threshold_pct=10):
-    swings = []
-    for length in range(min_days, max_days + 1):
-        for start in range(len(df) - length):
-            slice_df = df.iloc[start:start+length]
-            try:
-                open_p = float(slice_df['Open'].iloc[0])
-                close_p = float(slice_df['Close'].iloc[-1])
-                ret = (close_p / open_p - 1) * 100
-                if abs(ret) >= threshold_pct:
-                    start_date = slice_df.index[0].date()
-                    end_date = slice_df.index[-1].date()
-                    start_full = int(slice_df['full_bc'].iloc[0])
-                    direction = 'UP (potential top/short)' if ret >= 0 else 'DOWN (potential bottom/long)'
-                    swings.append({
-                        'Start': start_date,
-                        'End': end_date,
-                        'Days': length,
-                        '% Return': round(ret, 2),
-                        'Direction': direction,
-                        'Start_full_bc': start_full
-                    })
-            except:
-                continue
-    
-    if not swings:
+# ── Generate & backtest signals ────────────────────────────────────
+def run_swing_backtest(start_date, end_date):
+    prices = load_btc_prices(start_date, end_date)
+    if prices is None:
         return None, None
-    
-    swing_df = pd.DataFrame(swings)
-    
-    stats = swing_df.groupby('Start_full_bc').agg(
-        Count=('Start_full_bc', 'size'),
-        Avg_Return=('% Return', 'mean'),
-        Up_Pct=('% Return', lambda x: (x > 0).mean() * 100)
-    ).round(2).sort_values('Avg_Return', ascending=False)
-    
-    return swing_df, stats
+
+    # Hourly data for PH
+    hourly_data = []
+    current = datetime(start_date.year, start_date.month, start_date.day, 0, 0)
+    end_dt = datetime(end_date.year, end_date.month, end_date.day, 23, 59)
+    while current <= end_dt:
+        pd_val = get_pd_for_timestamp(current)
+        ph = get_ph(current.hour, pd_val)
+        hourly_data.append({
+            'ts': current,
+            'date': current.date(),
+            'ph': ph,
+            'is_high': ph in PEAK_PH,
+            'is_dip': ph in DIP_PH
+        })
+        current += timedelta(hours=1)
+
+    # Monthly bombcode counters
+    month_data = defaultdict(lambda: {k: [] for k in ['six','three','seven','nine','eight']})
+    for h in hourly_data:
+        if h['ts'].hour == 0:
+            b = bombcode(h['date'].month, h['date'].day, h['date'].year)
+            ym = (h['date'].year, h['date'].month)
+            if b == 6: month_data[ym]['six'].append(h['date'])
+            if b == 3: month_data[ym]['three'].append(h['date'])
+            if b == 7: month_data[ym]['seven'].append(h['date'])
+            if b == 9: month_data[ym]['nine'].append(h['date'])
+            if b == 8: month_data[ym]['eight'].append(h['date'])
+
+    active_trades = []
+    completed = []
+
+    def next_month_first6(entry):
+        y, m = entry.year, entry.month
+        ny, nm = (y, m + 1) if m < 12 else (y + 1, 1)
+        return month_data[(ny, nm)]['six'][0] if month_data[(ny, nm)]['six'] else None
+
+    def next_month_first7(entry):
+        y, m = entry.year, entry.month
+        ny, nm = (y, m + 1) if m < 12 else (y + 1, 1)
+        return month_data[(ny, nm)]['seven'][0] if month_data[(ny, nm)]['seven'] else None
+
+    # Process day by day
+    current_date = start_date
+    while current_date <= end_date:
+        ym = (current_date.year, current_date.month)
+        data = month_data[ym]
+
+        # Check exits
+        still_active = []
+        for trade in active_trades:
+            entry_date, ttype, desc = trade
+            exit_triggered = False
+
+            if ttype.startswith('L') and any(h['date'] == current_date and h['is_high'] for h in hourly_data):
+                if ttype == 'L1' and len(data['seven']) >= 2 and data['seven'][1] == current_date:
+                    exit_triggered = True
+                elif ttype == 'L1b' and len(data['three']) >= 2 and data['three'][1] == current_date:
+                    exit_triggered = True
+                elif ttype == 'L3' and len(data['nine']) >= 2 and data['nine'][1] == current_date:
+                    exit_triggered = True
+                elif ttype == 'L4' and len(data['nine']) >= 3 and data['nine'][2] == current_date:
+                    exit_triggered = True
+                elif ttype == 'L2' and next_month_first7(entry_date) == current_date:
+                    exit_triggered = True
+
+            elif ttype in {'SHORT','S1','S2'} and any(h['date'] == current_date and h['is_dip'] for h in hourly_data):
+                if ttype == 'SHORT' and len(data['eight']) >= 3 and data['eight'][2] == current_date:
+                    exit_triggered = True
+                elif ttype == 'S1' and next_month_first6(entry_date) == current_date:
+                    exit_triggered = True
+                elif ttype == 'S2' and next_month_first6(entry_date) == current_date:
+                    exit_triggered = True
+
+            if exit_triggered:
+                entry_close = prices.get(pd.Timestamp(entry_date))
+                exit_close = prices.get(pd.Timestamp(current_date))
+                ret = (exit_close / entry_close - 1) * 100 if pd.notna(entry_close) and pd.notna(exit_close) else None
+
+                completed.append({
+                    'Type': ttype,
+                    'Entry': entry_date,
+                    'Exit': current_date,
+                    'Held days': (current_date - entry_date).days,
+                    'Return %': round(ret, 2) if ret is not None else 'N/A',
+                    'Desc': desc
+                })
+            else:
+                still_active.append(trade)
+
+        active_trades = still_active
+
+        # Entries at midnight
+        if current_date in data['six']:
+            idx = data['six'].index(current_date)
+            if idx == 0:
+                if len(data['seven']) >= 2 and data['seven'][1] >= current_date:
+                    active_trades.append((current_date, 'L1', '1st 6 → 2nd 7'))
+                if len(data['three']) >= 2 and data['three'][1] >= current_date:
+                    active_trades.append((current_date, 'L1b', '1st 6 → 2nd 3'))
+            if idx == 1 and len(data['nine']) >= 2 and data['nine'][1] >= current_date:
+                active_trades.append((current_date, 'L3', '2nd 6 → 3rd 9'))
+            if idx == 2:
+                if len(data['nine']) >= 3 and data['nine'][2] >= current_date:
+                    active_trades.append((current_date, 'L4', '3rd 6 → 4th 9'))
+                if next_month_first7(current_date) and next_month_first7(current_date) <= end_date:
+                    active_trades.append((current_date, 'L2', '3rd 6 → next 1st 7'))
+
+        elif current_date in data['seven'] and data['seven'].index(current_date) == 1:
+            if len(data['eight']) >= 3 and data['eight'][2] >= current_date:
+                active_trades.append((current_date, 'SHORT', '2nd 7 → 3rd 8'))
+
+        elif current_date in data['nine'] and data['nine'].index(current_date) == 2:
+            if next_month_first6(current_date) and next_month_first6(current_date) <= end_date:
+                active_trades.append((current_date, 'S1', '3rd 9 → next 1st 6'))
+
+        elif current_date in data['three'] and data['three'].index(current_date) == 3:
+            if next_month_first6(current_date) and next_month_first6(current_date) <= end_date:
+                active_trades.append((current_date, 'S2', '4th 3 → next 1st 6'))
+
+        current_date += timedelta(days=1)
+
+    # Results
+    return completed
 
 # ── App ────────────────────────────────────────────────────────────
-st.title("BTC Numerology Analyzer – 2022–2025 Focus (Plain Text Output)")
+st.title("BTC Swing Codes Backtest – 2022 to Now")
 
-now = datetime.now(timezone.utc)
-info = get_current_info(now)
+st.subheader("Run Backtest")
+start_date = st.date_input("Start Date", value=datetime(2022, 1, 1).date())
+end_date = st.date_input("End Date", value=datetime.now(timezone.utc).date())
 
-st.subheader("Today")
-st.text(f"Classification: {info['cls']}")
-st.text(f"day_bc: {info['day_bc']}")
-st.text(f"full_bc: {info['full_bc']}")
-st.text(info['signal'])
-st.caption(f"Updated: {now.strftime('%Y-%m-%d %H:%M UTC')}")
+if st.button("Run Backtest"):
+    with st.spinner("Loading prices & generating signals..."):
+        completed = run_swing_backtest(start_date, end_date)
 
-st.divider()
-
-df = load_recent_data()
-
-if df is not None and not df.empty:
-    st.subheader("Performance 2022–2025")
-    by_cls, strong_combos, by_day_bc, by_full_bc = compute_stats(df)
-    
-    st.markdown("**By Classification**")
-    st.text(by_cls.to_string())
-    
-    st.markdown("**Strongest combos (≥20 days, sorted by avg return)**")
-    st.text(strong_combos.head(15).to_string())
-    
-    st.markdown("**By day_bc (avg return)**")
-    st.text(by_day_bc.to_string())
-    
-    st.markdown("**By full_bc (avg return)**")
-    st.text(by_full_bc.to_string())
-    
-    st.divider()
-    
-    st.subheader("Big Swings (≥10% in 4–10 days)")
-    swing_df, swing_stats = scan_swings(df)
-    if swing_stats is not None:
-        st.markdown("**Bias by starting full_bc**")
-        st.text(swing_stats.to_string())
-        
-        st.markdown("**Recent big swings (last 15)**")
-        st.text(swing_df.tail(15).to_string(index=False))
+    if not completed:
+        st.error("No signals or data loaded.")
     else:
-        st.warning("No big swings detected. Lower threshold to 7–8% if needed.")
+        longs = [t for t in completed if t['Type'].startswith('L')]
+        shorts = [t for t in completed if t['Type'] in {'SHORT', 'S1', 'S2'}]
 
-else:
-    st.error("Failed to load BTC data from yfinance.")
+        st.subheader("Results Summary")
+        st.text(f"Total completed signals: {len(completed)}")
+        st.text(f"LONGS: {len(longs)}")
+        st.text(f"SHORTS: {len(shorts)}")
 
-st.caption("Daily BTC-USD • 2022–2025 • Numerology only • Not financial advice • Patterns may not persist")
+        long_returns = [t['Return %'] for t in longs if t['Return %'] != 'N/A' and isinstance(t['Return %'], (int, float))]
+        short_returns = [t['Return %'] for t in shorts if t['Return %'] != 'N/A' and isinstance(t['Return %'], (int, float))]
+
+        if long_returns:
+            st.text(f"Longs avg return: {sum(long_returns)/len(long_returns):.2f}%")
+            st.text(f"Long win rate (>0%): {len([r for r in long_returns if r > 0])/len(long_returns)*100:.1f}%")
+        if short_returns:
+            st.text(f"Shorts avg return: {sum(short_returns)/len(short_returns):.2f}%")
+            st.text(f"Short win rate (<0%): {len([r for r in short_returns if r < 0])/len(short_returns)*100:.1f}%")
+
+        st.subheader("All Completed Trades")
+        for t in sorted(completed, key=lambda x: x['Entry'], reverse=True):
+            st.text(f"{t['Type']} | Entry: {t['Entry']} | Exit: {t['Exit']} | Held: {t['Held days']}d | Return: {t['Return %']}% | {t['Desc']}")
+
+st.caption("Signals generated from your swing code logic. Returns calculated close-to-close. Not financial advice.")
