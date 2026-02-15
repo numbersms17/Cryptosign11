@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 
 # ── BOMB CODE LOGIC ────────────────────────────────────────────────
 def reduce(n):
-    # Changed: no longer protect 11/22 — reduce everything >9 to single digit
     while n > 9:
         n = sum(int(c) for c in str(n))
     return n
@@ -81,115 +80,57 @@ def compute_single_stats(df):
     full_bc_only = df.groupby('full_bc')['Return'].mean().sort_values(ascending=False).round(2)
     return by_cls, top_combos, day_bc_only, full_bc_only
 
-# ── Full_BC Sequence Scanner ───────────────────────────────────────
-def scan_full_bc_sequences(df, min_length=4):
-    chains = []
-    current_chain = []
-    start_idx = None
-    for i in range(len(df)):
-        try:
-            curr_raw = df.iloc[i]['full_bc']
-            if pd.isna(curr_raw):
-                curr = np.nan
-            else:
-                curr = float(curr_raw.item() if hasattr(curr_raw, 'item') else curr_raw)
-        except:
-            curr = np.nan
-
-        if pd.isna(curr):
-            if current_chain and start_idx is not None:
-                try:
-                    open_price = df.iloc[start_idx]['Open'].item()
-                    close_price = df.iloc[i-1]['Close'].item()
-                    chain_return = (close_price / open_price - 1) * 100
-                    start_date = df.index[start_idx].date()
-                    end_date = df.index[i-1].date()
-                    seq_str = '→'.join(map(str, current_chain))
-                    bias = 'LONG' if chain_return > 0 else 'SHORT'
-                    chains.append({
-                        'Sequence': seq_str,
-                        'Length': len(current_chain),
-                        'Start_Date': start_date,
-                        'End_Date': end_date,
-                        'Return': round(chain_return, 2),
-                        'Bias': bias
-                    })
-                except:
-                    pass
-            current_chain = []
-            start_idx = None
-            continue
-
-        if not current_chain:
-            current_chain = [curr]
-            start_idx = i
-            continue
-
-        prev = current_chain[-1]
-        is_consecutive = (curr == prev + 1)
-        is_wrap = (prev == 9 and curr == 1)
-
-        if is_consecutive or is_wrap:
-            current_chain.append(curr)
-        else:
-            if len(current_chain) >= min_length and start_idx is not None:
-                try:
-                    open_price = df.iloc[start_idx]['Open'].item()
-                    close_price = df.iloc[i-1]['Close'].item()
-                    chain_return = (close_price / open_price - 1) * 100
-                    start_date = df.index[start_idx].date()
-                    end_date = df.index[i-1].date()
-                    seq_str = '→'.join(map(str, current_chain))
-                    bias = 'LONG' if chain_return > 0 else 'SHORT'
-                    chains.append({
-                        'Sequence': seq_str,
-                        'Length': len(current_chain),
-                        'Start_Date': start_date,
-                        'End_Date': end_date,
-                        'Return': round(chain_return, 2),
-                        'Bias': bias
-                    })
-                except:
-                    pass
-            current_chain = [curr]
-            start_idx = i
-
-    # Last chain
-    if len(current_chain) >= min_length and start_idx is not None:
-        try:
-            open_price = df.iloc[start_idx]['Open'].item()
-            close_price = df.iloc[-1]['Close'].item()
-            chain_return = (close_price / open_price - 1) * 100
-            start_date = df.index[start_idx].date()
-            end_date = df.index[-1].date()
-            seq_str = '→'.join(map(str, current_chain))
-            bias = 'LONG' if chain_return > 0 else 'SHORT'
-            chains.append({
-                'Sequence': seq_str,
-                'Length': len(current_chain),
-                'Start_Date': start_date,
-                'End_Date': end_date,
-                'Return': round(chain_return, 2),
-                'Bias': bias
-            })
-        except:
-            pass
-
-    chain_df = pd.DataFrame(chains)
-    if chain_df.empty:
+# ── Price Swing Scanner: Big Up/Down Moves ─────────────────────────
+def scan_price_swings(df, min_days=4, max_days=10, threshold_pct=10):
+    swings = []
+    for length in range(min_days, max_days + 1):
+        for start in range(len(df) - length):
+            slice_df = df.iloc[start:start+length]
+            total_return = (slice_df['Close'].iloc[-1] / slice_df['Open'].iloc[0] - 1) * 100
+            if abs(total_return) >= threshold_pct:
+                start_date = slice_df.index[0].date()
+                end_date = slice_df.index[-1].date()
+                start_full_bc = slice_df['full_bc'].iloc[0]
+                end_full_bc = slice_df['full_bc'].iloc[-1]
+                start_day_bc = slice_df['day_bc'].iloc[0]
+                direction = 'UP (Top/Short)' if total_return >= threshold_pct else 'DOWN (Bottom/Long)'
+                swings.append({
+                    'Start_Date': start_date,
+                    'End_Date': end_date,
+                    'Length': length,
+                    'Total_Return (%)': round(total_return, 2),
+                    'Direction': direction,
+                    'Start_full_bc': start_full_bc,
+                    'End_full_bc': end_full_bc,
+                    'Start_day_bc': start_day_bc
+                })
+    swing_df = pd.DataFrame(swings)
+    if swing_df.empty:
         return None, None
-
-    pattern_stats = chain_df.groupby('Sequence').agg({
-        'Length': 'mean',
-        'Return': ['count', 'mean', 'std', lambda x: (x > 0).mean() * 100],
-        'Bias': lambda x: x.mode()[0] if not x.empty else 'MIXED'
+    # Stats by start full_bc (entry bias)
+    start_stats = swing_df.groupby('Start_full_bc').agg({
+        'Total_Return (%)': ['count', 'mean', lambda x: (x > 0).mean() * 100],
+        'Direction': lambda x: x.mode()[0] if not x.empty else 'MIXED'
     }).round(2)
-    pattern_stats.columns = ['Avg_Length', 'Count', 'Avg_Return', 'Volatility', 'Win_Rate', 'Common_Bias']
-    pattern_stats = pattern_stats.sort_values('Win_Rate', ascending=False)
-    return chain_df, pattern_stats
+    start_stats.columns = ['Count', 'Avg_Return', 'Up_Pct', 'Common_Dir']
+    start_stats = start_stats.sort_values('Avg_Return', ascending=False)
+    return swing_df, start_stats
+
+# ── Month-End vs Month-Start Bias ──────────────────────────────────
+def month_bias(df):
+    monthly = df.resample('M').agg({
+        'Open': 'first',
+        'Close': 'last',
+        'Return': 'sum'
+    })
+    monthly['Monthly_Return (%)'] = (monthly['Close'] / monthly['Open'] - 1) * 100
+    monthly['Month_End_Bias'] = monthly['Monthly_Return (%)'].apply(
+        lambda x: 'Strong Close Up (Top/Short)' if x > 5 else 'Strong Close Down (Bottom/Long)' if x < -5 else 'Neutral'
+    )
+    return monthly[['Monthly_Return (%)', 'Month_End_Bias']]
 
 # ── Main App ───────────────────────────────────────────────────────
-st.title("BTC Bombcode Analyzer – Masters Reduced (11→2, 22→4)")
+st.title("BTC Bombcode Analyzer – Price Swing Scanner")
 
 now = datetime.now(timezone.utc)
 info = get_current_info(now)
@@ -208,7 +149,7 @@ st.divider()
 df = load_historical_data()
 
 if df is not None:
-    st.subheader("Single-Day Backtest (with reduced masters)")
+    st.subheader("Single-Day Backtest")
     by_cls, top_combos, day_bc_only, full_bc_only = compute_single_stats(df)
     st.text("By Classification:\n" + by_cls.to_string())
     st.text("Top Combos (min 30 days):\n" + top_combos.to_string())
@@ -217,15 +158,23 @@ if df is not None:
 
     st.divider()
 
-    st.subheader("Full_BC Sequence Scanner (Consecutive Chains)")
-    st.info("Detects ascending full_bc chains ≥4 days (with 9→1 wrap). Masters now reduced (11→2, 22→4). Stats sorted by winrate.")
-    chain_df, pattern_stats = scan_full_bc_sequences(df, min_length=4)
-    if pattern_stats is not None:
-        st.text("Pattern Stats (High Winrate First):\n" + pattern_stats.to_string())
-        st.text("Detected Chains Sample (first 20):\n" + chain_df.head(20).to_string(index=False))
+    st.subheader("Price Swing Scanner – Big Moves (≥10% over 4–10 days)")
+    st.info("Detects historical swings with strong up/down moves. Look at Start_full_bc for entry bias (e.g. certain numbers start big drops → short).")
+    swing_df, start_stats = scan_price_swings(df, min_days=4, max_days=10, threshold_pct=10)
+    if start_stats is not None:
+        st.text("Swing Stats by Start full_bc (Entry Bias):\n" + start_stats.to_string())
+        st.text("Detected Swings Sample (first 20):\n" + swing_df.head(20).to_string(index=False))
     else:
-        st.warning("No qualifying full_bc chains found.")
+        st.warning("No swings ≥10% found (try lowering threshold_pct to 5 or 8).")
+
+    st.divider()
+
+    st.subheader("Month-End vs Month-Start Bias")
+    st.info("Monthly close performance – strong close up = potential top/short, strong close down = potential bottom/long.")
+    month_df = month_bias(df)
+    st.text("Monthly Bias Summary:\n" + month_df.to_string())
+
 else:
     st.error("Failed to load BTC data.")
 
-st.caption("yfinance daily • Masters reduced • Scalar-safe scanner")
+st.caption("yfinance daily • Price swing focus • Bottom/Top of month check")
