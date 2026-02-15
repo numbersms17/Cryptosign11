@@ -87,27 +87,34 @@ def scan_full_bc_sequences(df, min_length=4):
     start_idx = None
     for i in range(len(df)):
         try:
-            curr = df.iloc[i]['full_bc'].item() if hasattr(df.iloc[i]['full_bc'], 'item') else float(df.iloc[i]['full_bc'])
-            if pd.isna(curr):
+            curr_raw = df.iloc[i]['full_bc']
+            if pd.isna(curr_raw):
                 curr = np.nan
+            else:
+                curr = float(curr_raw.item() if hasattr(curr_raw, 'item') else curr_raw)
         except:
             curr = np.nan
 
         if pd.isna(curr):
             if current_chain and start_idx is not None:
-                chain_return = (df.iloc[i-1]['Close'] / df.iloc[start_idx]['Open'] - 1) * 100
-                start_date = df.index[start_idx].date()
-                end_date = df.index[i-1].date()
-                seq_str = '→'.join(map(str, current_chain))
-                bias = 'LONG' if chain_return > 0 else 'SHORT'
-                chains.append({
-                    'Sequence': seq_str,
-                    'Length': len(current_chain),
-                    'Start_Date': start_date,
-                    'End_Date': end_date,
-                    'Return': round(chain_return, 2),
-                    'Bias': bias
-                })
+                try:
+                    open_price = df.iloc[start_idx]['Open'].item()
+                    close_price = df.iloc[i-1]['Close'].item()
+                    chain_return = (close_price / open_price - 1) * 100
+                    start_date = df.index[start_idx].date()
+                    end_date = df.index[i-1].date()
+                    seq_str = '→'.join(map(str, current_chain))
+                    bias = 'LONG' if chain_return > 0 else 'SHORT'
+                    chains.append({
+                        'Sequence': seq_str,
+                        'Length': len(current_chain),
+                        'Start_Date': start_date,
+                        'End_Date': end_date,
+                        'Return': round(chain_return, 2),
+                        'Bias': bias
+                    })
+                except:
+                    pass  # skip invalid chain
             current_chain = []
             start_idx = None
             continue
@@ -125,37 +132,47 @@ def scan_full_bc_sequences(df, min_length=4):
             current_chain.append(curr)
         else:
             if len(current_chain) >= min_length and start_idx is not None:
-                chain_return = (df.iloc[i-1]['Close'] / df.iloc[start_idx]['Open'] - 1) * 100
-                start_date = df.index[start_idx].date()
-                end_date = df.index[i-1].date()
-                seq_str = '→'.join(map(str, current_chain))
-                bias = 'LONG' if chain_return > 0 else 'SHORT'
-                chains.append({
-                    'Sequence': seq_str,
-                    'Length': len(current_chain),
-                    'Start_Date': start_date,
-                    'End_Date': end_date,
-                    'Return': round(chain_return, 2),
-                    'Bias': bias
-                })
+                try:
+                    open_price = df.iloc[start_idx]['Open'].item()
+                    close_price = df.iloc[i-1]['Close'].item()
+                    chain_return = (close_price / open_price - 1) * 100
+                    start_date = df.index[start_idx].date()
+                    end_date = df.index[i-1].date()
+                    seq_str = '→'.join(map(str, current_chain))
+                    bias = 'LONG' if chain_return > 0 else 'SHORT'
+                    chains.append({
+                        'Sequence': seq_str,
+                        'Length': len(current_chain),
+                        'Start_Date': start_date,
+                        'End_Date': end_date,
+                        'Return': round(chain_return, 2),
+                        'Bias': bias
+                    })
+                except:
+                    pass
             current_chain = [curr]
             start_idx = i
 
     # Last chain
     if len(current_chain) >= min_length and start_idx is not None:
-        chain_return = (df.iloc[-1]['Close'] / df.iloc[start_idx]['Open'] - 1) * 100
-        start_date = df.index[start_idx].date()
-        end_date = df.index[-1].date()
-        seq_str = '→'.join(map(str, current_chain))
-        bias = 'LONG' if chain_return > 0 else 'SHORT'
-        chains.append({
-            'Sequence': seq_str,
-            'Length': len(current_chain),
-            'Start_Date': start_date,
-            'End_Date': end_date,
-            'Return': round(chain_return, 2),
-            'Bias': bias
-        })
+        try:
+            open_price = df.iloc[start_idx]['Open'].item()
+            close_price = df.iloc[-1]['Close'].item()
+            chain_return = (close_price / open_price - 1) * 100
+            start_date = df.index[start_idx].date()
+            end_date = df.index[-1].date()
+            seq_str = '→'.join(map(str, current_chain))
+            bias = 'LONG' if chain_return > 0 else 'SHORT'
+            chains.append({
+                'Sequence': seq_str,
+                'Length': len(current_chain),
+                'Start_Date': start_date,
+                'End_Date': end_date,
+                'Return': round(chain_return, 2),
+                'Bias': bias
+            })
+        except:
+            pass
 
     chain_df = pd.DataFrame(chains)
     if chain_df.empty:
@@ -171,7 +188,7 @@ def scan_full_bc_sequences(df, min_length=4):
     return chain_df, pattern_stats
 
 # ── Main App ───────────────────────────────────────────────────────
-st.title("BTC Bombcode Analyzer – Sequence Scanner (Final Fix)")
+st.title("BTC Bombcode Analyzer – Sequence Scanner (Scalar Fixed)")
 
 now = datetime.now(timezone.utc)
 info = get_current_info(now)
@@ -210,4 +227,4 @@ if df is not None:
 else:
     st.error("Failed to load BTC data.")
 
-st.caption("yfinance daily • Scalar-safe scanner • Winrate-focused")
+st.caption("yfinance daily • Full scalar-safe • Winrate-focused")
