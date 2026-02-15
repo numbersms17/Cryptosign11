@@ -33,11 +33,11 @@ def get_current_info(now):
         'signal': f"**{cls.upper()} day** (day_bc={bc_d} | full_bc={bc_f})"
     }
 
-# ── Load data 2022 → latest (end=2026-01-01 to include 2025) ───────
+# ── Load data 2022 → latest ────────────────────────────────────────
 @st.cache_data(ttl=3600 * 6)
 def load_recent_data():
     try:
-        df = yf.download('BTC-USD', start='2022-01-01', end='2026-01-01', progress=False)
+        df = yf.download('BTC-USD', start='2022-01-01', progress=False)
         if df.empty:
             return None
         df = df[['Open', 'Close']].copy()
@@ -45,7 +45,6 @@ def load_recent_data():
         df['day_bc'] = df.index.day.map(bombcode_day)
         df['full_bc'] = df.index.map(lambda dt: bombcode_full(dt.month, dt.day, dt.year))
         
-        # Classification
         conditions = [
             df['day_bc'].isin([3,5,6,7,8,9]) & df['day_bc'].isin([3,7,5,9]),
             df['day_bc'].isin([3,5,6,7,8,9]) & ~df['day_bc'].isin([3,7,5,9]),
@@ -65,7 +64,6 @@ def compute_stats(df):
     if df is None or df.empty:
         return None, None, None, None
     
-    # By cls
     by_cls = df.groupby('cls')['Return'].agg(
         Days='count',
         Avg_Return='mean',
@@ -74,7 +72,6 @@ def compute_stats(df):
         Volatility='std'
     ).round(2)
     
-    # Strong combos ≥20 days
     combos = df.groupby(['cls', 'day_bc', 'full_bc'])['Return'].agg(
         Days='count',
         Avg_Return='mean',
@@ -119,14 +116,67 @@ def scan_swings(df, min_days=4, max_days=10, threshold_pct=10):
     swing_df = pd.DataFrame(swings)
     stats = swing_df.groupby('Start_full_bc').agg(
         Count='size',
-        Avg_Return='% mean',
+        Avg_Return='mean',
         Up_Pct=lambda x: (x > 0).mean() * 100
     ).round(2).sort_values('Avg_Return', ascending=False)
     
     return swing_df, stats
 
+# ── Consecutive Sequence Backtest ──────────────────────────────────
+def backtest_sequences(df):
+    if df is None or df.empty:
+        return None, None
+    
+    sequences = []
+    current = []
+    
+    for dt, row in df.iterrows():
+        fbc = row['full_bc']
+        
+        if not current:
+            current = [(dt, fbc)]
+        else:
+            prev_fbc = current[-1][1]
+            expected = prev_fbc + 1 if prev_fbc < 9 else 1
+            if fbc == expected:
+                current.append((dt, fbc))
+            else:
+                if len(current) >= 5:
+                    sequences.append(current)
+                current = [(dt, fbc)]
+    
+    if len(current) >= 5:
+        sequences.append(current)
+    
+    results = []
+    for seq in sequences:
+        start_dt = seq[0][0].date()
+        end_dt = seq[-1][0].date()
+        length = len(seq)
+        start_bc = seq[0][1]
+        results.append({
+            'Start': start_dt,
+            'End': end_dt,
+            'Length': length,
+            'Start_full_bc': start_bc
+        })
+    
+    if not results:
+        return None, None
+    
+    res_df = pd.DataFrame(results).sort_values('Start', ascending=False)
+    
+    summary = {
+        'Total Sequences (≥5 consecutive)': len(res_df),
+        'Average Length': res_df['Length'].mean().round(1),
+        'Longest Sequence': res_df['Length'].max(),
+        'Sequences per year (approx)': (len(res_df) / ((df.index.max() - df.index.min()).days / 365)).round(1)
+    }
+    
+    return res_df, summary
+
 # ── App ────────────────────────────────────────────────────────────
-st.title("BTC Numerology Analyzer – 2022–2025 Focus")
+st.title("BTC Numerology Analyzer – 2022–2025 Focus + Sequence Backtest")
 
 now = datetime.now(timezone.utc)
 info = get_current_info(now)
@@ -163,10 +213,10 @@ if df is not None and not df.empty:
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**By day_bc (avg return)**")
-        st.dataframe(by_day_bc.to_frame('%'))
+        st.dataframe(by_day_bc.to_frame(name='%'))
     with col2:
         st.markdown("**By full_bc (avg return)**")
-        st.dataframe(by_full_bc.to_frame('%'))
+        st.dataframe(by_full_bc.to_frame(name='%'))
     
     st.divider()
     
@@ -182,8 +232,24 @@ if df is not None and not df.empty:
         st.dataframe(swing_df.tail(15))
     else:
         st.warning("No big swings detected. Lower threshold to 7–8% if needed.")
+    
+    st.divider()
+    
+    st.subheader("Consecutive Sequence Backtest (5+ days full_bc)")
+    seq_df, seq_summary = backtest_sequences(df)
+    if seq_df is not None:
+        st.write("**Summary**")
+        st.json(seq_summary)
+        
+        st.markdown("**Detected sequences (most recent first)**")
+        st.dataframe(seq_df.head(30))
+        
+        with st.expander("Show all sequences"):
+            st.dataframe(seq_df)
+    else:
+        st.info("No sequences of 5+ consecutive full_bc found in the period.")
 
 else:
     st.error("Failed to load BTC data from yfinance.")
 
-st.caption("Daily BTC-USD • 2022–2025 • Numerology only • Not financial advice • Patterns may not persist")
+st.caption("Daily BTC-USD • 2022–present • Numerology patterns only • Not financial advice")
