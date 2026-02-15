@@ -84,7 +84,7 @@ def compute_stats(df):
     
     return by_cls, strong_combos, by_day_bc, by_full_bc
 
-# ── Swing scanner ──────────────────────────────────────────────────
+# ── Swing scanner (fixed aggregation) ──────────────────────────────
 def scan_swings(df, min_days=4, max_days=10, threshold_pct=10):
     swings = []
     for length in range(min_days, max_days + 1):
@@ -114,69 +114,18 @@ def scan_swings(df, min_days=4, max_days=10, threshold_pct=10):
         return None, None
     
     swing_df = pd.DataFrame(swings)
+    
+    # Fixed aggregation - use dict with tuples for renaming
     stats = swing_df.groupby('Start_full_bc').agg(
-        Count='size',
-        Avg_Return='mean',
-        Up_Pct=lambda x: (x > 0).mean() * 100
+        Count=('Start_full_bc', 'size'),
+        Avg_Return=('% Return', 'mean'),
+        Up_Pct=('% Return', lambda x: (x > 0).mean() * 100)
     ).round(2).sort_values('Avg_Return', ascending=False)
     
     return swing_df, stats
 
-# ── Consecutive Sequence Backtest ──────────────────────────────────
-def backtest_sequences(df):
-    if df is None or df.empty:
-        return None, None
-    
-    sequences = []
-    current = []
-    
-    for dt, row in df.iterrows():
-        fbc = row['full_bc']
-        
-        if not current:
-            current = [(dt, fbc)]
-        else:
-            prev_fbc = current[-1][1]
-            expected = prev_fbc + 1 if prev_fbc < 9 else 1
-            if fbc == expected:
-                current.append((dt, fbc))
-            else:
-                if len(current) >= 5:
-                    sequences.append(current)
-                current = [(dt, fbc)]
-    
-    if len(current) >= 5:
-        sequences.append(current)
-    
-    results = []
-    for seq in sequences:
-        start_dt = seq[0][0].date()
-        end_dt = seq[-1][0].date()
-        length = len(seq)
-        start_bc = seq[0][1]
-        results.append({
-            'Start': start_dt,
-            'End': end_dt,
-            'Length': length,
-            'Start_full_bc': start_bc
-        })
-    
-    if not results:
-        return None, None
-    
-    res_df = pd.DataFrame(results).sort_values('Start', ascending=False)
-    
-    summary = {
-        'Total Sequences (≥5 consecutive)': len(res_df),
-        'Average Length': res_df['Length'].mean().round(1),
-        'Longest Sequence': res_df['Length'].max(),
-        'Sequences per year (approx)': (len(res_df) / ((df.index.max() - df.index.min()).days / 365)).round(1)
-    }
-    
-    return res_df, summary
-
 # ── App ────────────────────────────────────────────────────────────
-st.title("BTC Numerology Analyzer – 2022–2025 Focus + Sequence Backtest")
+st.title("BTC Numerology Analyzer – 2022–2025 Focus")
 
 now = datetime.now(timezone.utc)
 info = get_current_info(now)
@@ -225,31 +174,16 @@ if df is not None and not df.empty:
     if swing_stats is not None:
         st.markdown("**Bias by starting full_bc**")
         st.dataframe(swing_stats.style.format({
-            'Avg_Return': '{:.2f}%'
+            'Avg_Return': '{:.2f}%',
+            'Up_Pct': '{:.1f}%'
         }))
         
         st.markdown("**Recent big swings**")
         st.dataframe(swing_df.tail(15))
     else:
         st.warning("No big swings detected. Lower threshold to 7–8% if needed.")
-    
-    st.divider()
-    
-    st.subheader("Consecutive Sequence Backtest (5+ days full_bc)")
-    seq_df, seq_summary = backtest_sequences(df)
-    if seq_df is not None:
-        st.write("**Summary**")
-        st.json(seq_summary)
-        
-        st.markdown("**Detected sequences (most recent first)**")
-        st.dataframe(seq_df.head(30))
-        
-        with st.expander("Show all sequences"):
-            st.dataframe(seq_df)
-    else:
-        st.info("No sequences of 5+ consecutive full_bc found in the period.")
 
 else:
     st.error("Failed to load BTC data from yfinance.")
 
-st.caption("Daily BTC-USD • 2022–present • Numerology patterns only • Not financial advice")
+st.caption("Daily BTC-USD • 2022–2025 • Numerology only • Not financial advice • Patterns may not persist")
