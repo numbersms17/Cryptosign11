@@ -1,4 +1,4 @@
-# app.py - SIMPLE DAILY HIGH/LOW BACKTEST
+# app.py - SIMPLE DAILY HIGH/LOW BACKTEST - FIXED FLOAT IN SET ERROR
 import streamlit as st
 import pandas as pd
 import yfinance as yf
@@ -21,6 +21,8 @@ def bombcode_day(d): return reduce(d)
 def bombcode_full(m,d,y): return reduce(m + d + y)
 
 def classify(day_bc, full_bc):
+    day_bc = int(day_bc)   # FIX: force int to avoid float in set error
+    full_bc = int(full_bc)
     if day_bc in {3,5,6,7,8,9}:
         return "High" if day_bc in {3,7,5,9} else "Low"
     return "High" if full_bc in {3,7,5,9} else "Low" if full_bc in {6,8} else "None"
@@ -107,4 +109,4 @@ if st.button("RUN BACKTEST", type="primary"):
         st.success("BACKTEST COMPLETE!")
         st.dataframe(trades_df.tail(20).style.format({'pnl': '{:.2%}'}))
 
-st.caption("Simple daily high/low version - no hourly data needed. Full 2020-2026 works instantly.")
+st.caption("Daily high/low version - no hourly data, no chunking errors. Full history works.")
