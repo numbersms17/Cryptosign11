@@ -8,10 +8,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# ────────────────────────────────────────────────
-#   === YOUR SECRET CONSTANTS & LOGIC ===
-#   (never shown / never printed to user)
-# ────────────────────────────────────────────────
+
 BTC_BIRTH = datetime(2009, 1, 3, 18, 15)
 
 HOUR_VALUES = {
