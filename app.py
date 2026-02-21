@@ -25,7 +25,7 @@ HIGH_PH = {9}            # SHORT direction
 LOW_PH  = {9}              # LONG / BUY direction
 
 HIGH_DAY_UD = {1,3, 5, 6, 7, 9}  # Only allow SHORT on these days
-LOW_DAY_UD  = {2, 4,6,22,11 8}        # Only allow LONG on these days
+LOW_DAY_UD  = {2, 4,6,22,11, 8}        # Only allow LONG on these days
 # ────────────────────────────────────────────────
 
 def reduce(n: int) -> int:
