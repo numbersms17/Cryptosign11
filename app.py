@@ -1,114 +1,164 @@
-# app.py - FIXED AMBIGUOUS TRUTH VALUE ERROR
+# app.py
 import streamlit as st
-import pandas as pd
-import yfinance as yf
-import plotly.graph_objects as go
 from datetime import datetime, timedelta
 
-# ── BOMB CODE FUNCTIONS ────────────────────────────────────────────────────
-HOUR_VALUES = {0:12,1:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,10:10,11:11,
-               12:12,13:1,14:2,15:3,16:4,17:5,18:6,19:7,20:8,21:9,22:10,23:11}
+st.set_page_config(
+    page_title="Crypto/Stock Numerology Signals",
+    page_icon="📈",
+    layout="wide"
+)
 
-HIGH_PH = {3,6,9}
-DIP_PH  = {7,11}
+# ────────────────────────────────────────────────
+#   HOUR VALUES (0-23 → numerology vibration)
+# ────────────────────────────────────────────────
+HOUR_VALUES = {
+    0:12, 1:1,  2:2,  3:3,  4:4,  5:5,  6:6,
+    7:7,  8:8,  9:9, 10:10, 11:11,
+   12:12,13:1, 14:2, 15:3, 16:4, 17:5, 18:6,
+   19:7, 20:8, 21:9, 22:10,23:11
+}
 
-def reduce(n):
-    while n > 9 and n not in {11,22}:
+# Day classification sets — feel free to tune
+HIGH_DAY_UD = {1, 3, 5, 6, 7, 9}       # Short / high energy days
+LOW_DAY_UD  = {2, 4, 6, 8, 11, 22}     # Buy / long / dip days
+
+# Hour targets
+HIGH_UH = {1, 9}     # SHORT targets
+LOW_UH  = {8, 9}     # LONG / BUY targets
+
+# ────────────────────────────────────────────────
+def reduce(n: int) -> int:
+    while n > 9 and n not in {11, 22}:
         n = sum(int(c) for c in str(n))
     return n
 
-def bombcode_day(d): return reduce(d)
-def bombcode_full(m,d,y): return reduce(m + d + y)
+def universal_day_number(date: datetime.date) -> int:
+    total = date.day + date.month + date.year
+    return reduce(total)
 
-def classify(day_bc, full_bc):
-    day_bc = int(day_bc)   # prevent float in set
-    full_bc = int(full_bc)
-    if day_bc in {3,5,6,7,8,9}:
-        return "High" if day_bc in {3,7,5,9} else "Low"
-    return "High" if full_bc in {3,7,5,9} else "Low" if full_bc in {6,8} else "None"
+def universal_hour_number(hour: int, ud: int) -> int:
+    total = ud + HOUR_VALUES[hour]
+    return total if total in {11, 22} else reduce(total)
 
-# ── APP ────────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Bombcode Daily High/Low Backtest", layout="wide")
+def fmt_hour(h: int) -> str:
+    ampm = 'am' if h < 12 else 'pm'
+    hour12 = h % 12 or 12
+    return f"{hour12}{ampm}"
 
-st.title("Bombcode Daily High/Low Backtest")
+def classify_day(ud: int) -> str:
+    if ud in HIGH_DAY_UD:
+        return "High"
+    if ud in LOW_DAY_UD:
+        return "Low"
+    return "None"
+
+# ────────────────────────────────────────────────
+def generate_signals(start_date: datetime.date, end_date: datetime.date):
+    daily = {}
+    current = datetime(start_date.year, start_date.month, start_date.day)
+
+    while current.date() <= end_date:
+        d = current.date()
+        ud = universal_day_number(d)
+        day_type = classify_day(ud)
+
+        high_times = []
+        low_times  = []
+
+        for hour in range(24):
+            uh = universal_hour_number(hour, ud)
+            time_label = fmt_hour(hour)
+
+            if uh in HIGH_UH:
+                high_times.append((hour, time_label))
+            if uh in LOW_UH:
+                low_times.append((hour, time_label))
+
+        daily[d] = {
+            'str': d.strftime("%A, %B %d, %Y"),
+            'ud': ud,
+            'day_type': day_type,
+            'high_times': high_times,
+            'low_times': low_times,
+        }
+
+        current += timedelta(days=1)
+
+    # Prepare display lines
+    lines = []
+
+    for date in sorted(daily.keys()):
+        data = daily[date]
+        day_type = data['day_type']
+
+        sorted_low  = [t for _, t in sorted(data['low_times'])]
+        sorted_high = [t for _, t in sorted(data['high_times'])]
+
+        parts = []
+        if day_type == "Low" and sorted_low:
+            parts.append(f"**LONG** at {', '.join(sorted_low)}")
+        elif day_type == "High" and sorted_high:
+            parts.append(f"**SHORT** at {', '.join(sorted_high)}")
+
+        signal = " | ".join(parts) if parts else "— no signal —"
+
+        lines.append(f"**{data['str']}**  (UD: {data['ud']})")
+        lines.append(f"→ {signal}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+# ────────────────────────────────────────────────
+#               STREAMLIT UI
+# ────────────────────────────────────────────────
+
+st.title("📈 Numerology Trading Signals")
+st.caption("Version 1.1 – based on Universal Day & Hour vibrations")
+
 st.markdown("""
-**Simplified Rules**  
-- On **High** days → Short at the **daily high**  
-- On **Low** days → Long at the **daily low**  
-- Exit: next day close  
-- Fees/slippage: -0.16% round-trip  
-- Data: daily candles (BTC-USD)
+**Legend**  
+🟢 **LONG** → potential buy / dip / accumulation hours  
+🔴 **SHORT** → potential high / reversal / distribution hours
 """)
 
-start_date = st.date_input("Start date", value=datetime(2020, 1, 1))
-end_date   = st.date_input("End date", value=datetime.now().date())
+col1, col2 = st.columns([1,1])
 
-if start_date >= end_date:
-    st.error("Start date must be before end date")
+with col1:
+    default_start = datetime.now().date() - timedelta(days=10)
+    start_input = st.date_input(
+        "Start date",
+        value=default_start,
+        min_value=datetime(2000,1,1).date(),
+        max_value=datetime.now().date()
+    )
+
+with col2:
+    default_end = datetime.now().date() + timedelta(days=14)
+    end_input = st.date_input(
+        "End date",
+        value=default_end,
+        min_value=start_input,
+        max_value=datetime(2030,12,31).date()
+    )
+
+if start_input > end_input:
+    st.error("End date must be after start date.")
     st.stop()
 
-if st.button("RUN BACKTEST", type="primary"):
-    with st.spinner("Downloading daily data & backtesting..."):
-        df = yf.download("BTC-USD", start=start_date, end=end_date + timedelta(days=1), interval="1d")
-        df = df[['Open','High','Low','Close','Volume']].dropna()
+if st.button("Generate Signals", type="primary", use_container_width=True):
+    with st.spinner("Calculating universal days & hours..."):
+        output = generate_signals(start_input, end_input)
 
-        # Daily classification
-        df['date'] = df.index.date
-        df['day_bc'] = df.index.map(lambda d: bombcode_day(d.day))
-        df['full_bc'] = df.index.map(lambda d: bombcode_full(d.month, d.day, d.year))
-        df['day_cls'] = df.apply(lambda r: classify(r['day_bc'], r['full_bc']), axis=1)
+    st.markdown("### Signals")
+    st.markdown(output)
 
-        # Trades - SAFE SCALAR VERSION
-        trades = []
-        FEE = 0.0008 * 2  # round-trip
-        for i in range(len(df) - 1):
-            row = df.iloc[i]
-            next_row = df.iloc[i+1]
+    st.download_button(
+        label="Download as .txt",
+        data=output,
+        file_name=f"signals_{start_input}_to_{end_input}.txt",
+        mime="text/plain"
+    )
 
-            # Force scalar string
-            day_cls_scalar = row.at['day_cls'] if pd.notna(row.at['day_cls']) else None
-
-            if day_cls_scalar == "High":
-                entry = float(row.at['High'])
-                exit_price = float(next_row.at['Close'])
-                pnl = (entry - exit_price) / entry - FEE
-                trades.append({'time': row.name, 'type': 'SHORT', 'pnl': pnl})
-
-            elif day_cls_scalar == "Low":
-                entry = float(row.at['Low'])
-                exit_price = float(next_row.at['Close'])
-                pnl = (exit_price - entry) / entry - FEE
-                trades.append({'time': row.name, 'type': 'LONG', 'pnl': pnl})
-
-        if not trades:
-            st.warning("No trades triggered.")
-            st.stop()
-
-        trades_df = pd.DataFrame(trades)
-        trades_df['cum_pnl'] = (1 + trades_df['pnl']).cumprod() - 1
-        trades_df = trades_df.sort_values('time')
-
-        # Equity + DD bands
-        equity = trades_df.set_index('time')['cum_pnl']
-        rolling_max = equity.cummax()
-        drawdown = (equity - rolling_max) / (1 + rolling_max)
-
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=equity.index, y=equity, name="Equity Curve", line=dict(color="lime")))
-        fig.add_trace(go.Scatter(x=drawdown.index, y=drawdown, name="Drawdown", line=dict(color="red"),
-                                 fill='tozeroy', fillcolor='rgba(255,0,0,0.2)'))
-        fig.update_layout(title="Equity Curve + Drawdown Bands", yaxis_title="Return / DD",
-                          template="plotly_dark", height=500, hovermode="x unified")
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Metrics
-        cols = st.columns(4)
-        cols[0].metric("Trades", len(trades_df))
-        cols[1].metric("Win Rate", f"{(trades_df['pnl'] > 0).mean():.1%}")
-        cols[2].metric("Avg PnL", f"{trades_df['pnl'].mean():.2%}")
-        cols[3].metric("Total Return", f"{trades_df['cum_pnl'].iloc[-1]:.2%}")
-
-        st.success("BACKTEST COMPLETE!")
-        st.dataframe(trades_df.tail(20).style.format({'pnl': '{:.2%}'}))
-
-st.caption("Daily high/low version - fixed float/int & scalar extraction. Full history works.")
+st.markdown("---")
+st.caption("Sets:  HIGH_DAY = {1,3,5,6,7,9}   |   LOW_DAY = {2,4,6,8,11,22}  |  SHORT hours: 1,9  |  LONG hours: 8,9")
+st.caption("You can fork & modify the sets in the code directly.")
