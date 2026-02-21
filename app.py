@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 st.set_page_config(
     page_title="#CRYPTOSIGN #STOCKSIGN Signals",
-    page_icon="₿📈",
+    page_icon="₿",
     layout="wide"
 )
 
