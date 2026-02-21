@@ -3,7 +3,7 @@ import streamlit as st
 from datetime import datetime, timedelta
 
 st.set_page_config(
-    page_title="BTC-Anchored Trading Signals",
+    page_title="#CRYPTOSIGN #STOCKSIGN Signals",
     page_icon="₿📈",
     layout="wide"
 )
