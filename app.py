@@ -158,7 +158,7 @@ def generate_signals(start_date: datetime.date, end_date: datetime.date):
 #               STREAMLIT UI
 # ────────────────────────────────────────────────
 
-st.title("₿ #CRYPTOSIGN #STOCKSIGN Signals $BTC $ETH $NQ1!")
+st.title("₿ #CRYPTOSIGN #STOCKSIGN Signals —$BTC $ETH $SOL $ENA $LINK $NQ1! $ES1! $YM1!—")
 st.caption("Version 2.2")
 
 st.markdown("""
