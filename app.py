@@ -121,8 +121,8 @@ def generate_signals(start_date: datetime.date, end_date: datetime.date):
 #               STREAMLIT UI
 # ────────────────────────────────────────────────
 
-st.title("₿ BTC-Anchored Trading Signals")
-st.caption("Version 1.0")
+st.title("₿ #CRYPTOSIGN #STOCKSIGN Signals ")
+st.caption("Version 1.1")
 
 st.markdown("""
 **Legend**  
