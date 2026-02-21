@@ -3,7 +3,7 @@ import streamlit as st
 from datetime import datetime, timedelta
 
 st.set_page_config(
-    page_title="BTC Bombcode Signals",
+    page_title="#CRYPTOSIGN #STOCKSIGN Signals",
     page_icon="₿📊",
     layout="wide"
 )
@@ -158,8 +158,8 @@ def generate_signals(start_date: datetime.date, end_date: datetime.date):
 #               STREAMLIT UI
 # ────────────────────────────────────────────────
 
-st.title("₿ BTC Bombcode Signals")
-st.caption("Version 1.0 – BTC anchored")
+st.title("₿ #CRYPTOSIGN #STOCKSIGN Signals")
+st.caption("Version 2.2")
 
 st.markdown("""
 **Legend**  
