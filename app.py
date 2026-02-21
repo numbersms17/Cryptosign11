@@ -77,7 +77,6 @@ def generate_signals(start_date: datetime.date, end_date: datetime.date):
 
         daily[d] = {
             'str': d.strftime("%A, %B %d, %Y"),
-            'ud': ud,
             'day_type': day_type,
             'high_times': high_times,
             'low_times': low_times,
@@ -85,7 +84,7 @@ def generate_signals(start_date: datetime.date, end_date: datetime.date):
 
         current += timedelta(days=1)
 
-    # Prepare display lines
+    # Prepare display lines — NO UD SHOWN
     lines = []
 
     for date in sorted(daily.keys()):
@@ -103,7 +102,7 @@ def generate_signals(start_date: datetime.date, end_date: datetime.date):
 
         signal = " | ".join(parts) if parts else "— no signal —"
 
-        lines.append(f"**{data['str']}**  (UD: {data['ud']})")
+        lines.append(f"**{data['str']}**")
         lines.append(f"→ {signal}")
         lines.append("")
 
@@ -114,7 +113,7 @@ def generate_signals(start_date: datetime.date, end_date: datetime.date):
 # ────────────────────────────────────────────────
 
 st.title("📈 Numerology Trading Signals")
-st.caption("Version 1.1 – based on Universal Day & Hour vibrations")
+st.caption("Version 1.1")
 
 st.markdown("""
 **Legend**  
@@ -147,7 +146,7 @@ if start_input > end_input:
     st.stop()
 
 if st.button("Generate Signals", type="primary", use_container_width=True):
-    with st.spinner("Calculating universal days & hours..."):
+    with st.spinner("Calculating signals..."):
         output = generate_signals(start_input, end_input)
 
     st.markdown("### Signals")
@@ -159,7 +158,3 @@ if st.button("Generate Signals", type="primary", use_container_width=True):
         file_name=f"signals_{start_input}_to_{end_input}.txt",
         mime="text/plain"
     )
-
-# ────────────────────────────────────────────────
-#   No more exposed sets / rules below this line
-# ────────────────────────────────────────────────
