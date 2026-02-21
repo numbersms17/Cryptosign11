@@ -24,7 +24,7 @@ HOUR_VALUES = {
 HIGH_DAY_UD = {1, 3, 5, 6, 7, 9}       # Short / high energy days
 LOW_DAY_UD  = {2, 4, 6, 8, 11, 22}     # Buy / long / dip days
 
-HIGH_UH = {1, 9}     # SHORT targets
+HIGH_UH = {1, 4}     # SHORT targets
 LOW_UH  = {8, 9}     # LONG / BUY targets
 # ────────────────────────────────────────────────
 
