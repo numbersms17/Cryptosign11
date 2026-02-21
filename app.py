@@ -18,15 +18,16 @@ HOUR_VALUES = {
    19:7, 20:8, 21:9, 22:10,23:11
 }
 
-# Day classification sets — feel free to tune
+# ────────────────────────────────────────────────
+#   === YOUR SECRET TUNING === (do NOT expose these)
+# ────────────────────────────────────────────────
 HIGH_DAY_UD = {1, 3, 5, 6, 7, 9}       # Short / high energy days
 LOW_DAY_UD  = {2, 4, 6, 8, 11, 22}     # Buy / long / dip days
 
-# Hour targets
 HIGH_UH = {1, 9}     # SHORT targets
 LOW_UH  = {8, 9}     # LONG / BUY targets
-
 # ────────────────────────────────────────────────
+
 def reduce(n: int) -> int:
     while n > 9 and n not in {11, 22}:
         n = sum(int(c) for c in str(n))
@@ -159,6 +160,6 @@ if st.button("Generate Signals", type="primary", use_container_width=True):
         mime="text/plain"
     )
 
-st.markdown("---")
-st.caption("Sets:  HIGH_DAY = {1,3,5,6,7,9}   |   LOW_DAY = {2,4,6,8,11,22}  |  SHORT hours: 1,9  |  LONG hours: 8,9")
-st.caption("You can fork & modify the sets in the code directly.")
+# ────────────────────────────────────────────────
+#   No more exposed sets / rules below this line
+# ────────────────────────────────────────────────
